@@ -13,7 +13,7 @@ This guide prepares you to defend every engineering decision in the Namlatic Hot
 > **Answer:** "Using native parameterized SQL with `pg.Pool` gave us three distinct advantages:
 > 1. **Complete Control:** We can leverage specific PostgreSQL features like `lower(title) text_pattern_ops`, `INSERT ... RETURNING`, and row locking with `SELECT ... FOR UPDATE` during image replacements.
 > 2. **Performance & Predictability:** ORMs frequently generate inefficient subqueries or cause the 'N+1' query problem. With native SQL, every query executed is explicit, transparent, and easily optimized using `EXPLAIN ANALYZE`.
-> 3. **Security:** By utilizing parameterized queries (`$1`, `$2`), user inputs are sent as parameters over the PostgreSQL binary wire protocol, ensuring 100% immunity against SQL injection without relying on ORM abstraction."
+> 3. **Security:** By utilizing parameterized queries (`$1`, `$2`), user inputs are sent as separate parameters over the PostgreSQL protocol, strictly separating query syntax from data and preventing untrusted input from modifying the query structure without relying on an ORM abstraction."
 
 ---
 

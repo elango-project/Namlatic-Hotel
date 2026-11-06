@@ -6,13 +6,13 @@ The Namlatic Hotel Owner Portal is a decoupled full-stack web application design
 
 ```
 [ Client Tier ]                [ Server Tier ]                  [ Persistence Tier ]
-React 19 + Redux Toolkit  ──>  Express.js REST API       ──>    PostgreSQL 18.6 (Database)
+React 18.3.1 + Redux Toolkit ──> Express.js REST API       ──>    PostgreSQL 18.6 (Database)
 Native Fetch & FormData        Node.js Native Test Runner ──>    Local / Persistent Disk (Media)
 ```
 
 ### Key Architectural Layers:
 1. **Presentation Layer (`client/`):**
-   - Single Page Application (SPA) bootstrapped with **Vite** and **React 18/19**.
+   - Single Page Application (SPA) bootstrapped with **Vite 6** and **React 18.3.1**.
    - State management powered by **Redux Toolkit** (`@reduxjs/toolkit`) for centralized caching, async thunk handling, and predictable data updates.
    - Declarative routing powered by **React Router 7**.
    - Client-side SEO headers managed via **React Helmet Async**.

@@ -11,13 +11,13 @@ Built in accordance with the **[Twelve-Factor App](https://12factor.net/)** meth
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                    Client (React SPA)                        │
-│   Vite • React 19 • Redux Toolkit • React Router 7 • Leaflet │
+│ Vite 6.0 • React 18.3.1 • Redux Toolkit 2.3 • React Router 7 │
 │                  Port 5173 (Development)                     │
 └──────────────────────────────┬───────────────────────────────┘
                                │ HTTP / Multipart Form Data / JSON
 ┌──────────────────────────────▼───────────────────────────────┐
 │                    Server (Express.js)                       │
-│     Node.js • Express 4 • Multer 2.5 • Native SQL (pg)       │
+│ Node.js • Express 4.21.1 • Multer 2.5.0 • Native SQL (pg)    │
 │                  Port 5000 (Development)                     │
 └──────────────────────────────┬───────────────────────────────┘
                                │ Parameterized SQL over TCP
@@ -35,13 +35,13 @@ Built in accordance with the **[Twelve-Factor App](https://12factor.net/)** meth
 | Layer | Selected Technology | Why This Technology? | Native Alternative Considered? |
 | :--- | :--- | :--- | :--- |
 | **Database** | **PostgreSQL 18.6** | Strict relational schema, exact `NUMERIC(12,2)` money precision, `text_pattern_ops` indexing. | MySQL / MongoDB evaluated; PostgreSQL selected for strict constraint enforcement. |
-| **SQL Access** | **Native SQL (`pg.Pool`)** | Full query control, zero ORM overhead, guaranteed parameterized SQL injection immunity. | ORMs (Prisma, Sequelize) avoided to prevent hidden query generation and N+1 problems. |
-| **Backend** | **Express.js (Node.js)** | Minimalist HTTP routing, clean middleware pipelines, mature ecosystem. | Raw `node:http` was evaluated; Express chosen to avoid manual URL/middleware boilerplate. |
+| **SQL Access** | **Native SQL (`pg.Pool` 8.13.1)** | Full query control, zero ORM overhead, and parameterized queries (`$1`, `$2`) that strictly separate SQL command syntax from user data, preventing SQL injection. | ORMs (Prisma, Sequelize) avoided to prevent hidden query generation and N+1 problems. |
+| **Backend** | **Express.js 4.21.1 (Node.js)** | Minimalist HTTP routing, clean middleware pipelines, mature ecosystem. | Raw `node:http` was evaluated; Express chosen to avoid manual URL/middleware boilerplate. |
 | **File Uploads** | **Multer 2.5.0** | Stream-based multipart parsing with strict 5 MB limits and UUID file generation. | Enhanced with native 12-byte binary magic byte inspection (rejects spoofed extensions). |
-| **Frontend** | **React 19 + Vite** | High-performance SPA with instant Hot Module Replacement (HMR). | React 19 provides modern hooks and transitions. |
-| **State Management**| **Redux Toolkit (RTK)** | Centralized, predictable global state with Immer-backed immutable updates. | Native Context API is suitable for simple state, but RTK scales cleanly for complex async inventory operations. |
-| **Maps** | **Leaflet** | Lightweight (~40 KB), open source, requires no paid Google API keys. | Native browser geolocation provides coordinates, but Leaflet is required to render the interactive map. |
-| **Unit Testing** | **Node.js `node:test`** | Fast in-memory execution with zero npm devDependencies. | Used built-in Node.js native test runner instead of Jest/Mocha. |
+| **Frontend** | **React 18.3.1 + Vite 6.0.0** | High-performance SPA with instant Hot Module Replacement (HMR) and proven ecosystem stability with Redux Toolkit and React Router 7. | React 18.3.1 provides robust concurrent features and stable library compatibility. |
+| **State Management**| **Redux Toolkit 2.3.0 (RTK)** | Centralized, predictable global state with Immer-backed immutable updates. | Native Context API is suitable for simple state, but RTK scales cleanly for complex async inventory operations. |
+| **Maps** | **Leaflet 1.9.4** | Lightweight (~40 KB), open source, requires no paid Google API keys. | Native browser geolocation provides coordinates, but Leaflet is required to render the interactive map. |
+| **Testing** | **Node.js `node:test` + Vitest 5.1.0** | Fast in-memory execution: built-in native runner for backend unit tests, Vitest + RTL for client components. | Jest evaluated; native node:test and Vitest chosen for performance and modern ESM support. |
 
 ---
 

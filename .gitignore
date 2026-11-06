@@ -1,10 +1,11 @@
 # Dependencies
 node_modules/
 
-# Environment files
+# Environment files (exclude secrets, allow example templates)
 .env
-.env.local
-.env.production
+.env.*
+!.env.example
+!.env.*.example
 
 # Build output
 client/dist/

@@ -19,7 +19,7 @@ This document details the architectural choices, trade-offs, and alternatives co
 - **Why Native SQL:**
   1. Full transparency: Every SQL query executed is explicit, preventing "N+1" query problems and hidden subqueries common to ORMs.
   2. Index tuning: Direct access to specialized PostgreSQL features like `lower(title) LIKE lower($1) || '%'` with `text_pattern_ops` and `SELECT ... FOR UPDATE`.
-  3. Security: Parameterization (`$1`, `$2`) separates SQL command parsing from user parameters, guaranteeing SQL injection immunity.
+  3. Security: Parameterization (`$1`, `$2`) strictly separates SQL command syntax from user parameters at the PostgreSQL protocol level, ensuring untrusted input is treated purely as data and cannot alter query structure.
 - **What would happen without it?** An ORM introduces an abstraction layer that can obscure query performance, complicate migrations, and increase bundle footprint.
 
 ---
@@ -42,9 +42,10 @@ This document details the architectural choices, trade-offs, and alternatives co
 
 ## 3. Frontend Technology Decisions
 
-### React 19 + Vite vs Next.js / Create React App
-- **Decision:** **React 19 + Vite**
+### React 18.3.1 + Vite 6 vs Next.js / Create React App
+- **Decision:** **React 18.3.1 + Vite 6**
 - **Problem Solved:** Fast development iteration and standard Single Page Application (SPA) architecture for an internal management portal.
+- **Why React 18.3.1:** Battle-tested stability, concurrent rendering features, and proven ecosystem compatibility with Redux Toolkit 2.3 and React Router 7.
 - **Why Vite:** Native ES modules with sub-second hot module replacement (HMR) and optimized Rollup production bundling.
 - **Why not Next.js?** The owner portal is an authenticated dashboard application. Server-Side Rendering (SSR) overhead and serverless edge functions are unnecessary for a secure inventory portal.
 
