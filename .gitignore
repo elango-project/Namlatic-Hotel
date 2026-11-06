@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Build output
+client/dist/
+server/dist/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Uploads (keep folder structure, ignore uploaded media)
+server/src/uploads/*
+!server/src/uploads/.gitkeep
+!server/src/uploads/hotels/
+server/src/uploads/hotels/*
+!server/src/uploads/hotels/.gitkeep
+
+# Coverage
+coverage/

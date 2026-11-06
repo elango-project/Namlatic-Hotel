@@ -1,0 +1,28 @@
+{
+  "name": "namlatic-hotel-portal-server",
+  "version": "1.0.0",
+  "description": "Namlatic Hotel Owner Portal – Backend API",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test:unit": "node --test tests/unit/hotel.validator.test.js tests/unit/security.test.js tests/unit/stats.test.js",
+    "test:integration": "node tests/integration/hotel.api.test.js",
+    "test": "npm run test:unit && npm run test:integration"
+  },
+  "dependencies": {
+    "express": "^4.21.1",
+    "pg": "^8.13.1",
+    "dotenv": "^16.4.7",
+    "cors": "^2.8.5",
+    "multer": "^2.5.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  },
+  "overrides": {
+    "nodemon": {
+      "minimatch": "^11.0.4"
+    }
+  }
+}
