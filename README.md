@@ -86,8 +86,8 @@ namlatic-hotel-portal/
 ## 4. Getting Started
 
 ### Prerequisites
-- **Node.js:** v20.0.0 or higher (v22+ or a compatible currently supported LTS version recommended)
-  > **Note:** React Router 7 requires Node.js 20+, which establishes the application's runtime floor even though Vite 6 supports Node.js 18. The highest dependency requirement determines the minimum runtime standard across the workspace.
+- **Node.js:** v22.0.0 or higher (v24 LTS or another currently supported LTS release recommended)
+  > **Note:** React Router 7 has a Node.js 20 compatibility minimum, but Node.js 20 reached End-of-Life (EOL) in March 2026. This project establishes Node.js 22+ as its supported runtime baseline to avoid deploying on an unsupported EOL environment, while recommending Node.js 24 LTS or newer supported LTS releases.
 - **PostgreSQL:** v16.0 or higher (v18.6 verified)
 - **npm:** v9.0.0 or higher
 
