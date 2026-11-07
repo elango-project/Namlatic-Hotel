@@ -115,6 +115,7 @@ namlatic-hotel-portal/
 │   │   │   └── MainLayout.jsx         # Sidebar navigation, top bar, connection badge
 │   │   ├── pages/
 │   │   │   ├── DashboardPage.jsx      # Server-aggregated KPIs, quick actions, recent items
+│   │   │   ├── LandingPage.jsx        # Landing hero and portal overview
 │   │   │   └── MyHotelsPage.jsx       # Inventory grid, filter toolbar & pagination
 │   │   ├── services/
 │   │   │   └── api.js                 # Centralized fetch wrapper & URL builder

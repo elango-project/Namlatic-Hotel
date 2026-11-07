@@ -4,6 +4,9 @@
   "version": "1.0.0",
   "description": "Namlatic Hotel Owner Portal – Frontend",
   "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",

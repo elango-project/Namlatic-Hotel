@@ -1,6 +1,6 @@
 # Namlatic Hotel Owner Portal
 
-A full-stack, enterprise-grade Hotel Inventory Management System built for hotel owners to create, view, search, update, and manage hotel properties.
+A full-stack Hotel Inventory Management System built for hotel owners to create, view, search, update, and manage hotel properties.
 
 Built in accordance with the **[Twelve-Factor App](https://12factor.net/)** methodology, featuring native PostgreSQL parameterized SQL, image binary magic byte security, and comprehensive unit and integration testing.
 
@@ -61,7 +61,7 @@ namlatic-hotel-portal/
 ├── client/                            # Frontend Single Page Application
 │   ├── src/
 │   │   ├── components/                # Reusable UI widgets
-│   │   ├── pages/                     # Routed views (Dashboard, Add, Edit, Detail)
+│   │   ├── pages/                     # Routed views (Dashboard, My Hotels, Landing; Add/Edit and Detail planned for Phase 4B/4C)
 │   │   ├── store/                     # Redux Toolkit store and slices
 │   │   └── App.jsx                    # Routing and layout root
 │   └── package.json
@@ -86,7 +86,8 @@ namlatic-hotel-portal/
 ## 4. Getting Started
 
 ### Prerequisites
-- **Node.js:** v18.0.0 or higher (v22+ recommended)
+- **Node.js:** v20.0.0 or higher (v22+ or a compatible currently supported LTS version recommended)
+  > **Note:** React Router 7 requires Node.js 20+, which establishes the application's runtime floor even though Vite 6 supports Node.js 18. The highest dependency requirement determines the minimum runtime standard across the workspace.
 - **PostgreSQL:** v16.0 or higher (v18.6 verified)
 - **npm:** v9.0.0 or higher
 

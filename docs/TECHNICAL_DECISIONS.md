@@ -71,7 +71,7 @@ Whenever native browser or runtime capabilities adequately fulfill requirements,
 | **HTTP Communication** | Modern native `fetch()` | Built into all modern browsers; eliminates the need for Axios. |
 | **Multipart Form Submission** | Native `FormData` | Handles binary streams and text boundaries natively. |
 | **Responsive Layout** | Native CSS Grid, Flexbox & `@media` queries | Clean, semantic styling without framework overhead. |
-| **Unit Testing** | Native Node.js `node:test` + `node:assert` | Built-in since Node.js 18/20/22; fast execution with zero npm devDependencies. |
+| **Unit Testing** | Native Node.js `node:test` + `node:assert` | Built into Node.js (project requires Node.js 20+ to satisfy React Router 7); fast execution with zero npm devDependencies. |
 
 ---
 
