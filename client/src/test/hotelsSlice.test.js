@@ -7,6 +7,8 @@ import hotelsReducer, {
   fetchHotels,
   deleteHotel,
   fetchHotelStats,
+  createHotel,
+  updateHotel,
 } from '../features/hotels/hotelsSlice';
 
 describe('Redux: hotelsSlice', () => {
@@ -180,5 +182,66 @@ describe('Redux: hotelsSlice', () => {
 
     expect(nextState.statsStatus).toBe('failed');
     expect(nextState.statsError).toBe('Database aggregation error');
+  });
+
+  it('updates hotel in items array immediately upon updateHotel.fulfilled without full reload', () => {
+    const stateWithHotels = {
+      ...initialState,
+      items: [
+        { id: '1', title: 'Old Title', price: '200.00', latitude: 20, longitude: 50 },
+        { id: '2', title: 'Other Hotel', price: '300.00', latitude: 21, longitude: 51 },
+      ],
+      pagination: { ...initialState.pagination, total: 2 },
+    };
+
+    const updatedHotel = {
+      id: '1',
+      title: 'Updated Grand Title',
+      price: '275.50',
+      latitude: 20,
+      longitude: 50,
+      description: 'Newly renovated luxury suites',
+    };
+
+    const nextState = hotelsReducer(stateWithHotels, {
+      type: updateHotel.fulfilled.type,
+      payload: updatedHotel,
+    });
+
+    expect(nextState.saveStatus).toBe('succeeded');
+    expect(nextState.currentHotel).toEqual(updatedHotel);
+    // Verified: in-memory list item updated in place
+    expect(nextState.items[0].title).toBe('Updated Grand Title');
+    expect(nextState.items[0].price).toBe('275.50');
+    expect(nextState.items[1].title).toBe('Other Hotel');
+  });
+
+  it('prepends new hotel to items and increments total upon createHotel.fulfilled without full reload', () => {
+    const stateWithHotels = {
+      ...initialState,
+      items: [
+        { id: '1', title: 'Existing Hotel', price: '200.00' },
+      ],
+      pagination: { ...initialState.pagination, total: 1, offset: 0, limit: 6 },
+    };
+
+    const newHotel = {
+      id: '2',
+      title: 'Brand New Hotel',
+      price: '350.00',
+      latitude: -33.8688,
+      longitude: 151.2093,
+    };
+
+    const nextState = hotelsReducer(stateWithHotels, {
+      type: createHotel.fulfilled.type,
+      payload: newHotel,
+    });
+
+    expect(nextState.saveStatus).toBe('succeeded');
+    expect(nextState.pagination.total).toBe(2);
+    // Verified: newly created hotel is prepended to the top of the list
+    expect(nextState.items[0]).toEqual(newHotel);
+    expect(nextState.items[1].id).toBe('1');
   });
 });

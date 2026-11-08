@@ -42,7 +42,7 @@ Creates a new hotel inventory record.
   - `description` *(string, required)*: Full description (1-5000 characters).
   - `latitude` *(number, required)*: Geographic latitude ($-90.000000$ to $90.000000$).
   - `longitude` *(number, required)*: Geographic longitude ($-180.000000$ to $180.000000$).
-  - `price` *(number, required)*: Nightly price ($> 0.00$, max 2 decimals).
+  - `price` *(number, required)*: Listed price ($> 0.00$, max 2 decimals).
   - `image` *(binary file, optional)*: Image file (JPEG, PNG, WebP, max 5 MB).
 - **Responses:**
   - `201 Created`:
@@ -132,8 +132,8 @@ Eliminates in-memory pagination distortion by aggregating across the entire data
   - **Terminology Standard:**
     - `total_properties` / `totalProperties`: Exact count of registered properties.
     - `average_price` / `averagePrice`: Exact `ROUND(AVG(price), 2)` formatted as a decimal string.
-    - `min_price` / `minPrice`: Minimum registered nightly rate.
-    - `max_price` / `maxPrice`: Maximum registered nightly rate.
+    - `min_price` / `minPrice`: Minimum registered price.
+    - `max_price` / `maxPrice`: Maximum registered price.
     - `properties_with_images` / `propertiesWithImages`: Count of properties where `image_path IS NOT NULL` (does not imply file existence or validity).
 
 ---

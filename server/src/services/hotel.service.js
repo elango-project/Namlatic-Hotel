@@ -295,7 +295,7 @@ const deleteHotel = async (id) => {
 
 /**
  * Retrieves portfolio-wide hotel statistics using PostgreSQL server-side aggregation.
- * Calculates total properties, average nightly rate, minimum rate, maximum rate,
+ * Calculates total properties, average price, minimum price, maximum price,
  * and count of properties with recorded image paths.
  * Preserves exact numeric precision and avoids in-memory pagination distortion.
  *

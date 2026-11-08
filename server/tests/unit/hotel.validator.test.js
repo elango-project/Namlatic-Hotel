@@ -114,41 +114,63 @@ describe('Unit Tests: hotel.validator.js', () => {
     });
 
     it('validates latitude boundaries (-90 to +90) and precision', () => {
-      // Exactly 90.0 and -90.0 are valid
+      // Required valid latitude test cases
+      assert.equal(validateCreateHotel({ ...validPayload, latitude: '-33.8688' }).isValid, true);
+      assert.equal(validateCreateHotel({ ...validPayload, latitude: '-90' }).isValid, true);
+      assert.equal(validateCreateHotel({ ...validPayload, latitude: '90' }).isValid, true);
       assert.equal(validateCreateHotel({ ...validPayload, latitude: '90.0' }).isValid, true);
       assert.equal(validateCreateHotel({ ...validPayload, latitude: '-90.0' }).isValid, true);
 
-      // Out of bounds
-      const resHigh = validateCreateHotel({ ...validPayload, latitude: '90.0001' });
-      assert.equal(resHigh.isValid, false);
-      assert.ok(resHigh.errors.some((e) => e.includes('between -90.0 and 90.0')));
+      // Required boundary violation test cases
+      const resLowBound = validateCreateHotel({ ...validPayload, latitude: '-90.000001' });
+      assert.equal(resLowBound.isValid, false);
+      assert.ok(resLowBound.errors.some((e) => e.includes('between -90.0 and 90.0')));
 
-      const resLow = validateCreateHotel({ ...validPayload, latitude: '-90.0001' });
-      assert.equal(resLow.isValid, false);
-      assert.ok(resLow.errors.some((e) => e.includes('between -90.0 and 90.0')));
+      const resHighBound = validateCreateHotel({ ...validPayload, latitude: '90.000001' });
+      assert.equal(resHighBound.isValid, false);
+      assert.ok(resHighBound.errors.some((e) => e.includes('between -90.0 and 90.0')));
 
-      // Exceeds 6 decimal places
-      const resPrecision = validateCreateHotel({ ...validPayload, latitude: '24.1234567' });
+      // Exceeds 6 decimal places (excessive decimal precision)
+      const resPrecision = validateCreateHotel({ ...validPayload, latitude: '-33.8688123' });
       assert.equal(resPrecision.isValid, false);
       assert.ok(resPrecision.errors.some((e) => e.includes('cannot exceed 6 decimal places')));
 
-      // Non-numeric latitude
-      const resNonNum = validateCreateHotel({ ...validPayload, latitude: 'invalid_lat' });
-      assert.equal(resNonNum.isValid, false);
-      assert.ok(resNonNum.errors.some((e) => e.includes('valid finite number')));
+      // Malformed numeric inputs (12abc, --5, Infinity, scientific notation 1e2)
+      for (const malformed of ['12abc', '--5', 'Infinity', '-Infinity', '1e2', '1.5e-3']) {
+        const res = validateCreateHotel({ ...validPayload, latitude: malformed });
+        assert.equal(res.isValid, false, `Expected ${malformed} to be rejected`);
+        assert.ok(res.errors.some((e) => e.includes('valid finite number')));
+      }
     });
 
     it('validates longitude boundaries (-180 to +180) and precision', () => {
+      // Required valid longitude test cases
+      assert.equal(validateCreateHotel({ ...validPayload, longitude: '-70.6693' }).isValid, true);
+      assert.equal(validateCreateHotel({ ...validPayload, longitude: '-180' }).isValid, true);
+      assert.equal(validateCreateHotel({ ...validPayload, longitude: '180' }).isValid, true);
       assert.equal(validateCreateHotel({ ...validPayload, longitude: '180.0' }).isValid, true);
       assert.equal(validateCreateHotel({ ...validPayload, longitude: '-180.0' }).isValid, true);
 
-      const resHigh = validateCreateHotel({ ...validPayload, longitude: '180.0001' });
-      assert.equal(resHigh.isValid, false);
-      assert.ok(resHigh.errors.some((e) => e.includes('between -180.0 and 180.0')));
+      // Required boundary violation test cases
+      const resLowBound = validateCreateHotel({ ...validPayload, longitude: '-180.000001' });
+      assert.equal(resLowBound.isValid, false);
+      assert.ok(resLowBound.errors.some((e) => e.includes('between -180.0 and 180.0')));
 
-      const resPrecision = validateCreateHotel({ ...validPayload, longitude: '54.1234567' });
+      const resHighBound = validateCreateHotel({ ...validPayload, longitude: '180.000001' });
+      assert.equal(resHighBound.isValid, false);
+      assert.ok(resHighBound.errors.some((e) => e.includes('between -180.0 and 180.0')));
+
+      // Exceeds 6 decimal places (excessive decimal precision)
+      const resPrecision = validateCreateHotel({ ...validPayload, longitude: '-70.6693123' });
       assert.equal(resPrecision.isValid, false);
       assert.ok(resPrecision.errors.some((e) => e.includes('cannot exceed 6 decimal places')));
+
+      // Malformed numeric inputs (12abc, --5, Infinity, scientific notation 1e2)
+      for (const malformed of ['12abc', '--5', 'Infinity', '-Infinity', '1e2', '1.5e-3']) {
+        const res = validateCreateHotel({ ...validPayload, longitude: malformed });
+        assert.equal(res.isValid, false, `Expected ${malformed} to be rejected`);
+        assert.ok(res.errors.some((e) => e.includes('valid finite number')));
+      }
     });
 
     it('validates price constraints (positive, non-zero, max 2 decimals, finite)', () => {

@@ -64,6 +64,58 @@ export const fetchHotelStats = createAsyncThunk(
 );
 
 /**
+ * Async thunk to retrieve a single hotel record by its primary key ID.
+ */
+export const fetchHotelById = createAsyncThunk(
+  'hotels/fetchHotelById',
+  async (hotelId, { signal, rejectWithValue }) => {
+    try {
+      const response = await hotelApi.getHotelById(hotelId, signal);
+      return response.data;
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        throw err;
+      }
+      return rejectWithValue(err.message || 'Failed to fetch hotel details.');
+    }
+  }
+);
+
+/**
+ * Async thunk to create a new hotel property with optional image.
+ */
+export const createHotel = createAsyncThunk(
+  'hotels/createHotel',
+  async (formData, { rejectWithValue }) => {
+    try {
+      const response = await hotelApi.createHotel(formData);
+      return response.data;
+    } catch (err) {
+      const message = err.message || 'Failed to create hotel.';
+      const errors = err.errors || [];
+      return rejectWithValue({ message, errors });
+    }
+  }
+);
+
+/**
+ * Async thunk to update an existing hotel property by ID with optional image replacement.
+ */
+export const updateHotel = createAsyncThunk(
+  'hotels/updateHotel',
+  async ({ id, formData }, { rejectWithValue }) => {
+    try {
+      const response = await hotelApi.updateHotel(id, formData);
+      return response.data;
+    } catch (err) {
+      const message = err.message || 'Failed to update hotel.';
+      const errors = err.errors || [];
+      return rejectWithValue({ message, errors });
+    }
+  }
+);
+
+/**
  * Async thunk to check PostgreSQL readiness probe.
  */
 export const checkBackendReadiness = createAsyncThunk(
@@ -104,6 +156,12 @@ const initialState = {
   error: null,
   deleteStatus: 'idle', // 'idle' | 'loading' | 'succeeded' | 'failed'
   deleteError: null,
+  currentHotel: null,
+  currentHotelStatus: 'idle', // 'idle' | 'loading' | 'succeeded' | 'failed'
+  currentHotelError: null,
+  saveStatus: 'idle', // 'idle' | 'loading' | 'succeeded' | 'failed'
+  saveError: null,
+  notification: null, // { type: 'success' | 'error', message: string } | null
   backendOnline: null, // null | boolean
 };
 
@@ -133,6 +191,25 @@ export const hotelsSlice = createSlice({
     clearError: (state) => {
       state.error = null;
       state.deleteError = null;
+      state.saveError = null;
+      state.currentHotelError = null;
+    },
+    clearCurrentHotel: (state) => {
+      state.currentHotel = null;
+      state.currentHotelStatus = 'idle';
+      state.currentHotelError = null;
+      state.saveStatus = 'idle';
+      state.saveError = null;
+    },
+    clearSaveStatus: (state) => {
+      state.saveStatus = 'idle';
+      state.saveError = null;
+    },
+    setNotification: (state, action) => {
+      state.notification = action.payload;
+    },
+    clearNotification: (state) => {
+      state.notification = null;
     },
   },
   extraReducers: (builder) => {
@@ -175,6 +252,72 @@ export const hotelsSlice = createSlice({
         state.deleteError = action.payload || 'Failed to delete property.';
       })
 
+      // fetchHotelById
+      .addCase(fetchHotelById.pending, (state) => {
+        state.currentHotelStatus = 'loading';
+        state.currentHotelError = null;
+        state.currentHotel = null;
+      })
+      .addCase(fetchHotelById.fulfilled, (state, action) => {
+        state.currentHotelStatus = 'succeeded';
+        state.currentHotel = action.payload;
+      })
+      .addCase(fetchHotelById.rejected, (state, action) => {
+        if (action.error?.name !== 'AbortError') {
+          state.currentHotelStatus = 'failed';
+          state.currentHotelError = action.payload || action.error.message || 'Failed to load hotel.';
+        }
+      })
+
+      // createHotel
+      .addCase(createHotel.pending, (state) => {
+        state.saveStatus = 'loading';
+        state.saveError = null;
+      })
+      .addCase(createHotel.fulfilled, (state, action) => {
+        state.saveStatus = 'succeeded';
+        state.pagination.total = (state.pagination.total || 0) + 1;
+        // If on the first page, prepend the new hotel to the top of items list
+        if (state.pagination.offset === 0) {
+          state.items = [
+            action.payload,
+            ...state.items.filter((h) => String(h.id) !== String(action.payload.id)),
+          ].slice(0, state.pagination.limit);
+        }
+        state.notification = {
+          type: 'success',
+          message: `Property "${action.payload.title}" created successfully.`,
+        };
+      })
+      .addCase(createHotel.rejected, (state, action) => {
+        state.saveStatus = 'failed';
+        state.saveError = action.payload?.message || action.error.message || 'Failed to create hotel.';
+      })
+
+      // updateHotel
+      .addCase(updateHotel.pending, (state) => {
+        state.saveStatus = 'loading';
+        state.saveError = null;
+      })
+      .addCase(updateHotel.fulfilled, (state, action) => {
+        state.saveStatus = 'succeeded';
+        state.currentHotel = action.payload;
+        // Update in-memory items list if present
+        const updatedId = String(action.payload.id);
+        const idx = state.items.findIndex((h) => String(h.id) === updatedId);
+        if (idx !== -1) {
+          state.items[idx] = action.payload;
+        }
+        state.notification = {
+          type: 'success',
+          message: `Property "${action.payload.title}" updated successfully.`,
+        };
+      })
+      .addCase(updateHotel.rejected, (state, action) => {
+        state.saveStatus = 'failed';
+        state.saveError = action.payload?.message || action.error.message || 'Failed to update hotel.';
+      })
+
       // checkBackendReadiness
       .addCase(checkBackendReadiness.fulfilled, (state, action) => {
         state.backendOnline = action.payload;
@@ -214,6 +357,10 @@ export const {
   setPageOffset,
   resetFilters,
   clearError,
+  clearCurrentHotel,
+  clearSaveStatus,
+  setNotification,
+  clearNotification,
 } = hotelsSlice.actions;
 
 export default hotelsSlice.reducer;

@@ -107,6 +107,25 @@ export const hotelApi = {
     request(`/hotels/${id}`, { method: 'GET', signal }),
 
   /**
+   * Creates a new hotel property with optional image.
+   * Accepts FormData containing text fields and optional binary image.
+   * @param {FormData} formData
+   * @param {AbortSignal} [signal]
+   */
+  createHotel: (formData, signal = undefined) =>
+    request('/hotels', { method: 'POST', body: formData, signal }),
+
+  /**
+   * Updates an existing hotel property by ID with optional image replacement.
+   * Accepts FormData containing text fields and optional replacement image.
+   * @param {string|number} id
+   * @param {FormData} formData
+   * @param {AbortSignal} [signal]
+   */
+  updateHotel: (id, formData, signal = undefined) =>
+    request(`/hotels/${id}`, { method: 'PUT', body: formData, signal }),
+
+  /**
    * Deletes a hotel record by ID.
    * @param {string|number} id
    */

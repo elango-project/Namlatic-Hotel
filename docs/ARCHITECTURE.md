@@ -100,10 +100,11 @@ namlatic-hotel-portal/
 │   │   ├── app/                       # Redux store configuration
 │   │   │   └── store.js
 │   │   ├── config/                    # Project configurations
-│   │   │   └── currency.js            # Standard USD currency formatting & symbols
+│   │   │   └── currency.js            # Configurable currency formatting (neutral by default, via VITE_APP_CURRENCY)
 │   │   ├── components/                # Reusable UI components
 │   │   │   ├── HotelCard.jsx          # Property card with image fallback & actions
 │   │   │   ├── HotelCardSkeleton.jsx  # Shimmer loading placeholder
+│   │   │   ├── HotelForm.jsx          # Reusable Add/Edit form with live preview & validation
 │   │   │   ├── FilterToolbar.jsx      # Debounced search & price filters
 │   │   │   ├── Pagination.jsx         # Server-side pagination controls
 │   │   │   ├── DeleteConfirmModal.jsx # Accessible delete confirmation modal
@@ -115,6 +116,7 @@ namlatic-hotel-portal/
 │   │   │   └── MainLayout.jsx         # Sidebar navigation, top bar, connection badge
 │   │   ├── pages/
 │   │   │   ├── DashboardPage.jsx      # Server-aggregated KPIs, quick actions, recent items
+│   │   │   ├── HotelFormPage.jsx      # Page container for Create and Edit routes
 │   │   │   ├── LandingPage.jsx        # Landing hero and portal overview
 │   │   │   └── MyHotelsPage.jsx       # Inventory grid, filter toolbar & pagination
 │   │   ├── services/
@@ -122,8 +124,10 @@ namlatic-hotel-portal/
 │   │   ├── styles/
 │   │   │   ├── index.css              # Design tokens, reset, typography
 │   │   │   └── App.css                # Layout, components, and responsive rules
-│   │   ├── test/                      # Vitest unit test suites (27 tests)
+│   │   ├── test/                      # Vitest unit test suites (52 tests)
 │   │   │   ├── setup.js
+│   │   │   ├── HotelForm.test.jsx
+│   │   │   ├── HotelFormPage.test.jsx
 │   │   │   ├── HotelCard.test.jsx
 │   │   │   ├── hotelsSlice.test.js
 │   │   │   ├── FilterToolbar.test.jsx
@@ -167,8 +171,8 @@ namlatic-hotel-portal/
                     └── <Outlet>
                           ├── Route: "/" | "/dashboard" ──> <DashboardPage>
                           │     ├── <StatCard> (Total Properties from DB: COUNT(*))
-                          │     ├── <StatCard> (Average Nightly Rate from DB: AVG(price))
-                          │     ├── <StatCard> (Rate Range from DB: MIN(price) - MAX(price))
+                          │     ├── <StatCard> (Average Price from DB: AVG(price))
+                          │     ├── <StatCard> (Price Range from DB: MIN(price) - MAX(price))
                           │     ├── <StatCard> (Properties with Images: COUNT(image_path))
                           │     └── <RecentPropertiesGrid>
                           │           └── <HotelCard> (x3 preview)
@@ -225,3 +229,125 @@ namlatic-hotel-portal/
 2. **Filter Independence:** When an owner searches by title or filters by price on the inventory page, Redux updates `state.hotels.items` to only the matching subset. Global dashboard metrics must remain accurate regardless of active search filters.
 3. **Database Engine Efficiency:** PostgreSQL calculates `COUNT(*)`, `AVG(price)`, `MIN(price)`, `MAX(price)`, and `COUNT(image_path)` in a single optimized sequential scan in sub-milliseconds without transmitting raw records over the wire.
 4. **Exact Decimal Precision:** PostgreSQL's `ROUND(COALESCE(AVG(price), 0), 2)` operates on native arbitrary-precision `NUMERIC` types, eliminating floating-point rounding errors.
+
+---
+
+## 5. Hotel Creation & Editing Architecture (Phase 4B)
+
+### 5.1 Reusable Form Architecture
+
+The portal implements a single, unified `<HotelForm />` component serving two distinct routing contexts:
+1. **Create Mode (`/hotels/new`):**
+   - Initializes with clean default values.
+   - Allows optional image upload with instant client preview.
+   - Dispatches `createHotel(formData)` to `POST /api/hotels`.
+   - On success, invalidates/refreshes portfolio statistics and navigates to `/hotels` with a flash success toast.
+2. **Edit Mode (`/hotels/:id/edit`):**
+   - Validates the numeric route `:id` parameter.
+   - Dispatches `fetchHotelById(id)` to retrieve existing database values.
+   - Populates form inputs and displays the current server-stored hero image (`initialData.image_path`).
+   - Allows modifying text fields and optionally choosing a replacement photo.
+   - Allows reverting back to the original image via the "Revert to Original" button.
+   - Dispatches `updateHotel({ id, formData })` to `PUT /api/hotels/:id`.
+   - Preserves the existing image on the backend if no new file is uploaded.
+
+### 5.2 Browser File API & Object URL Lifecycle Management
+
+#### What is a browser `File` object?
+When a user selects a file using `<input type="file" />`, the browser provides a `File` object (inheriting from `Blob`). It represents raw immutable binary data on the user's local disk, providing metadata including `.name`, `.size`, and `.type` (MIME).
+
+#### Why use `URL.createObjectURL(file)`?
+Instead of reading the entire file into JavaScript memory as a base64 Data URL (which consumes 33% more memory and freezes the UI thread for large images) or uploading the file to a server merely to preview it:
+- `URL.createObjectURL(file)` generates a lightweight, synchronous reference URI (e.g. `blob:http://localhost:5173/3f92b7...`) pointing directly to the file data already held in the browser's internal file cache.
+- The `<img>` tag renders this blob URL instantly with zero network delay and zero CPU conversion overhead.
+
+#### Why must Object URLs be explicitly revoked?
+Browser blob URLs remain registered in browser memory for the entire lifespan of the document window unless explicitly freed. If a user selects several high-resolution photos consecutively or repeatedly mounts/unmounts form views:
+- Unrevoked blob URLs lead to significant memory leaks.
+- In `HotelForm.jsx`, previous blob URLs are revoked immediately when a new file is chosen (`URL.revokeObjectURL(oldUrl)`), when a replacement is cancelled, and automatically upon component unmount via a `useEffect` cleanup hook:
+  ```javascript
+  useEffect(() => {
+    return () => {
+      if (currentBlobUrlRef.current && currentBlobUrlRef.current.startsWith('blob:')) {
+        URL.revokeObjectURL(currentBlobUrlRef.current);
+        currentBlobUrlRef.current = null;
+      }
+    };
+  }, []);
+  ```
+
+### 5.3 Multipart `FormData` & Why Content-Type Headers Must Not Be Manually Set
+
+#### What is `FormData`?
+`FormData` is a native browser API that compiles key-value pairs representing form fields and binary file streams into a format suitable for transmission using `multipart/form-data`.
+
+#### Why MUST we NOT manually set `Content-Type: multipart/form-data`?
+A multipart HTTP request requires a unique boundary delimiter (e.g. `multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW`) that separates individual fields and binary file chunks within the HTTP body.
+- When you pass a `FormData` object to `fetch(url, { method: 'POST', body: formData })`, the browser automatically computes and attaches the `Content-Type` header along with the exact matching `boundary` string.
+- If a developer manually hardcodes `headers: { 'Content-Type': 'multipart/form-data' }`, the boundary parameter is omitted. The backend server (Multer) will be unable to parse field boundaries and will reject the request with HTTP 400 or HTTP 500 error.
+- In [`client/src/services/api.js`](../client/src/services/api.js), the centralized `request` wrapper enforces this rule:
+  ```javascript
+  if (options.body && !(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+  }
+  ```
+
+### 5.4 Existing Image Preservation Logic
+
+During property editing (`PUT /api/hotels/:id`), hotel owners frequently update descriptions or prices without altering property photos.
+1. **Frontend Handling:**
+   - If the user does not select a new file, the `FormData` submitted by `HotelForm` omits the `image` field entirely.
+   - It sends only updated text fields (`title`, `description`, `latitude`, `longitude`, `price`).
+2. **Backend Handling:**
+   - Express Multer inspects `req.file`. Since no new file was uploaded, `req.file` is `undefined`.
+   - In `hotelService.updateHotel(id, hotelData, imageFile)`:
+     ```javascript
+     const oldImagePath = checkRes.rows[0].image_path;
+     const finalImagePath = imageFile ? imageFile.relativeUrl : oldImagePath;
+     ```
+   - The database retains the existing `image_path`, and the existing file on disk is untouched.
+   - If a new file *is* uploaded, Multer verifies its magic bytes, replaces the database path, and safely unlinks the old file from disk *after* the database transaction commits.
+
+### 5.5 Defense-in-Depth Validation Model
+
+Input validation is rigorously enforced across three independent architectural tiers:
+
+| Field | Client Validation (`HotelForm.jsx`) | Backend Validation (`hotel.validator.js`) | PostgreSQL Constraint (`init.sql`) |
+| :--- | :--- | :--- | :--- |
+| **Title** | Non-empty, max 255 chars, trimmed | Required, string, trimmed length > 0, max 255 chars | `length(trim(title)) > 0` |
+| **Description** | Non-empty, max 5000 chars, trimmed | Required, string, trimmed length > 0 | `length(trim(description)) > 0` |
+| **Latitude** | Finite number, -90.0 to 90.0, max 6 decimals | Required, -90.0 to 90.0, max 6 decimals | `latitude BETWEEN -90.0 AND 90.0` |
+| **Longitude** | Finite number, -180.0 to 180.0, max 6 decimals | Required, -180.0 to 180.0, max 6 decimals | `longitude BETWEEN -180.0 AND 180.0` |
+| **Price** | Finite number, > 0, max 2 decimals | Required, > 0, max 2 decimals | `price > 0`, `NUMERIC(12,2)` |
+| **Image** | JPEG/PNG/WebP MIME & ext, max 5 MB | Multer MIME filter, 5 MB limit, 12-byte binary magic byte inspection | Stored as relative path `image_path` |
+
+### 5.6 Coordinate Validation & Scientific Notation Rule
+
+Geographic coordinates (latitude $-90.0 \dots +90.0$ and longitude $-180.0 \dots +180.0$) strictly support both positive and negative values.
+1. **Format Validation (`NUMERIC_FORMAT_REGEX`):**
+   - Both client (`HotelForm.jsx`) and server (`hotel.validator.js`) validate numeric strings against `/^-?\d+(\.\d+)?$/`.
+   - An optional leading negative sign (`-?`) allows legitimate southern latitudes (e.g., Sydney at `-33.8688`) and western longitudes (e.g., Santiago at `-70.6693`).
+   - Inputs with multiple signs (`--5`), trailing non-numeric characters (`12abc`), or `Infinity` are rejected as invalid.
+2. **Rejection of Scientific Notation:**
+   - Values containing exponential notation (e.g., `1e2`, `1.5e-3`) are intentionally rejected on both client and server.
+   - While `Number('1e2')` yields `100` in JavaScript, scientific notation is inappropriate and ambiguous for geographical coordinate inputs and financial property prices. Enforcing `/^-?\d+(\.\d+)?$/` guarantees explicit decimal inputs.
+3. **Decimal Precision Checks:**
+   - Coordinates allow at most 6 decimal places (approximately 0.11-meter precision on Earth's surface).
+   - Prices allow at most 2 decimal places.
+
+### 5.7 Redux List Synchronization Strategy
+
+When an owner creates or edits a property, the application avoids full browser reloads:
+1. **In-Place Mutation Update:**
+   - `updateHotel.fulfilled` locates the hotel by ID in `state.hotels.items` and updates it in place. If the user navigates back to the hotel list, the updated title, price, and details are immediately visible.
+2. **First-Page Prepend on Create:**
+   - `createHotel.fulfilled` increments `state.pagination.total` and prepends the new hotel to `state.hotels.items` (respecting `limit`), keeping the list synchronized with PostgreSQL's `ORDER BY created_at DESC`.
+3. **Authoritative Navigation Refetch:**
+   - When the user is routed to `/hotels`, `MyHotelsPage` mounts and triggers `fetchHotels()` to reconcile with PostgreSQL. In addition, `fetchHotelStats()` is triggered in the background to invalidate stale KPI aggregates.
+
+### 5.8 Currency Neutrality & Configurable Display
+
+The application does not assume a specific currency (e.g., USD or INR):
+- **Default Display:** Formats prices as clean numbers with standard grouping and two decimal places (e.g., `250.00`, `1,250.50`).
+- **Configuration (`VITE_APP_CURRENCY`):** If set to an ISO 4217 code (e.g., `USD`, `EUR`, `INR`), `formatCurrency` and `getCurrencySymbol` automatically format prices with the corresponding symbol (e.g., `$250.00`, `€250.00`, `₹250.00`).
+- **Filter Inputs:** The minimum/maximum price input fields conditionally render the currency symbol only when configured, ensuring visual harmony in both neutral and localized modes.

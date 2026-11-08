@@ -78,7 +78,7 @@ Whenever native browser or runtime capabilities adequately fulfill requirements,
 ## 5. Dashboard Aggregates: PostgreSQL Server-Side Aggregation vs Client-Side Paginated Calculation
 
 ### Decision: Dedicated `GET /api/hotels/stats` powered by PostgreSQL Aggregation
-- **Problem:** In earlier client iterations, dashboard KPIs (Average Nightly Rate, Rate Range, Properties with Images) were computed in the browser by mapping over `state.hotels.items` (the paginated collection).
+- **Problem:** In earlier client iterations, dashboard KPIs (Average Price, Price Range, Properties with Images) were computed in the browser by mapping over `state.hotels.items` (the paginated collection).
 - **Why This Was Incorrect:**
   1. **Pagination Slicing:** The hotel inventory endpoint (`GET /api/hotels?limit=6&offset=0`) returns only a single page slice (6 records) out of the entire database. Calculating averages or rate bounds over 6 items produces invalid metrics that misrepresent the owner's true portfolio.
   2. **Filtering Distortion:** If a user navigates to `/hotels` and applies a price or title filter, the items in Redux reflect only the filtered subset. Computing portfolio KPIs from filtered items yields erroneous global metrics.
@@ -104,6 +104,6 @@ Whenever native browser or runtime capabilities adequately fulfill requirements,
 
 - **Decision:** **United States Dollar (USD, `$`)**
 - **Architecture Standard:**
-  1. **Database:** Nightly rates are stored as PostgreSQL `NUMERIC(12,2)` (supporting values up to 9,999,999,999.99 with exact 2-decimal fractional scale).
+  1. **Database:** Property prices are stored as PostgreSQL `NUMERIC(12,2)` (supporting values up to 9,999,999,999.99 with exact 2-decimal fractional scale).
   2. **API:** Returns financial values as exact decimal strings (e.g. `"270.75"`) to prevent IEEE 754 precision loss during JSON serialization.
   3. **Frontend:** Centralized in [`client/src/config/currency.js`](file:///d:/project/Namlatic%20Hotel/client/src/config/currency.js) with `APP_CURRENCY = 'USD'` and `APP_CURRENCY_SYMBOL = '$'`. All components (Dashboard, Hotel Cards, Filter Toolbar, Detail views) format currency through `formatCurrency()`, guaranteeing consistent display across the application.

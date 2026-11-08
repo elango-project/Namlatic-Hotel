@@ -30,6 +30,9 @@ function MainLayout() {
     if (location.pathname === '/hotels/new') {
       return 'Register New Property';
     }
+    if (location.pathname.endsWith('/edit')) {
+      return 'Edit Property';
+    }
     if (location.pathname.startsWith('/hotels/')) {
       return 'Property Details';
     }
@@ -113,7 +116,6 @@ function MainLayout() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
             <span>Add Property</span>
-            <span className="badge-coming-soon">Phase 4B</span>
           </NavLink>
         </nav>
 

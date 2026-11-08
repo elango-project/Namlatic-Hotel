@@ -49,10 +49,9 @@ function HotelCard({ hotel, onDeleteClick }) {
           </div>
         )}
 
-        {/* Nightly Rate Badge */}
+        {/* Price Badge */}
         <div className="hotel-card-price-badge">
           <span className="hotel-card-price-value">{formatPrice(hotel.price)}</span>
-          <span className="hotel-card-price-period">/ night</span>
         </div>
       </div>
 

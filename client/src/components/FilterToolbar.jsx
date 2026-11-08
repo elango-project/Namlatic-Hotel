@@ -127,8 +127,8 @@ function FilterToolbar({
         {/* Price Range Filter Form */}
         <form className="price-filter-form" onSubmit={handleApplyPrice}>
           <div className="price-inputs">
-            <div className="price-input-wrapper">
-              <span className="price-currency-symbol">{APP_CURRENCY_SYMBOL}</span>
+            <div className={`price-input-wrapper ${APP_CURRENCY_SYMBOL ? 'has-symbol' : ''}`}>
+              {APP_CURRENCY_SYMBOL && <span className="price-currency-symbol">{APP_CURRENCY_SYMBOL}</span>}
               <input
                 id="min-price-input"
                 type="number"
@@ -138,12 +138,12 @@ function FilterToolbar({
                 placeholder="Min Price"
                 value={minPrice}
                 onChange={(e) => setMinPrice(e.target.value)}
-                aria-label="Minimum nightly rate"
+                aria-label="Minimum price"
               />
             </div>
             <span className="price-separator">to</span>
-            <div className="price-input-wrapper">
-              <span className="price-currency-symbol">{APP_CURRENCY_SYMBOL}</span>
+            <div className={`price-input-wrapper ${APP_CURRENCY_SYMBOL ? 'has-symbol' : ''}`}>
+              {APP_CURRENCY_SYMBOL && <span className="price-currency-symbol">{APP_CURRENCY_SYMBOL}</span>}
               <input
                 id="max-price-input"
                 type="number"
@@ -153,7 +153,7 @@ function FilterToolbar({
                 placeholder="Max Price"
                 value={maxPrice}
                 onChange={(e) => setMaxPrice(e.target.value)}
-                aria-label="Maximum nightly rate"
+                aria-label="Maximum price"
               />
             </div>
             <button type="submit" className="btn btn-secondary btn-apply">

@@ -12,6 +12,13 @@ const hasValidDecimals = (val, maxDecimals) => {
 };
 
 /**
+ * Standard decimal numeric format regex.
+ * Rejects scientific notation (e.g., '1e2', '1.5e-3'), multiple signs, and non-numeric characters.
+ * Accepts optional leading minus for negative coordinates.
+ */
+const NUMERIC_FORMAT_REGEX = /^-?\d+(\.\d+)?$/;
+
+/**
  * Validates payload for creating a new hotel (POST /api/hotels).
  *
  * @param {Record<string, any>} body - The parsed request body (from multipart/form-data)
@@ -58,7 +65,7 @@ const validateCreateHotel = (body) => {
   } else {
     const latStr = String(rawLat).trim();
     const latNum = Number(latStr);
-    if (!Number.isFinite(latNum) || isNaN(latNum)) {
+    if (!Number.isFinite(latNum) || isNaN(latNum) || !NUMERIC_FORMAT_REGEX.test(latStr)) {
       errors.push('Latitude must be a valid finite number.');
     } else if (latNum < -90.0 || latNum > 90.0) {
       errors.push('Latitude must be between -90.0 and 90.0 degrees.');
@@ -77,7 +84,7 @@ const validateCreateHotel = (body) => {
   } else {
     const longStr = String(rawLong).trim();
     const longNum = Number(longStr);
-    if (!Number.isFinite(longNum) || isNaN(longNum)) {
+    if (!Number.isFinite(longNum) || isNaN(longNum) || !NUMERIC_FORMAT_REGEX.test(longStr)) {
       errors.push('Longitude must be a valid finite number.');
     } else if (longNum < -180.0 || longNum > 180.0) {
       errors.push('Longitude must be between -180.0 and 180.0 degrees.');
@@ -96,7 +103,7 @@ const validateCreateHotel = (body) => {
   } else {
     const priceStr = String(rawPrice).trim();
     const priceNum = Number(priceStr);
-    if (!Number.isFinite(priceNum) || isNaN(priceNum)) {
+    if (!Number.isFinite(priceNum) || isNaN(priceNum) || !NUMERIC_FORMAT_REGEX.test(priceStr)) {
       errors.push('Price must be a valid finite number.');
     } else if (priceNum <= 0) {
       errors.push('Price must be greater than zero.');
@@ -141,7 +148,7 @@ const validateListHotels = (query) => {
   if (query.minPrice !== undefined && query.minPrice !== '') {
     const minPriceStr = String(query.minPrice).trim();
     const minPriceNum = Number(minPriceStr);
-    if (!Number.isFinite(minPriceNum) || isNaN(minPriceNum)) {
+    if (!Number.isFinite(minPriceNum) || isNaN(minPriceNum) || !NUMERIC_FORMAT_REGEX.test(minPriceStr)) {
       errors.push('minPrice must be a valid finite number.');
     } else if (minPriceNum < 0) {
       errors.push('minPrice cannot be negative.');
@@ -156,7 +163,7 @@ const validateListHotels = (query) => {
   if (query.maxPrice !== undefined && query.maxPrice !== '') {
     const maxPriceStr = String(query.maxPrice).trim();
     const maxPriceNum = Number(maxPriceStr);
-    if (!Number.isFinite(maxPriceNum) || isNaN(maxPriceNum)) {
+    if (!Number.isFinite(maxPriceNum) || isNaN(maxPriceNum) || !NUMERIC_FORMAT_REGEX.test(maxPriceStr)) {
       errors.push('maxPrice must be a valid finite number.');
     } else if (maxPriceNum < 0) {
       errors.push('maxPrice cannot be negative.');

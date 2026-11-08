@@ -61,7 +61,7 @@ namlatic-hotel-portal/
 ├── client/                            # Frontend Single Page Application
 │   ├── src/
 │   │   ├── components/                # Reusable UI widgets
-│   │   ├── pages/                     # Routed views (Dashboard, My Hotels, Landing; Add/Edit and Detail planned for Phase 4B/4C)
+│   │   ├── pages/                     # Routed views (Dashboard, My Hotels, Landing, HotelFormPage [Add/Edit]; Detail planned for Phase 4C)
 │   │   ├── store/                     # Redux Toolkit store and slices
 │   │   └── App.jsx                    # Routing and layout root
 │   └── package.json
@@ -151,10 +151,10 @@ namlatic-hotel-portal/
 
 ## 5. Running Automated Tests
 
-The test suite includes **108 automated tests** across the entire full-stack architecture:
+The test suite includes **138 automated tests** across the entire full-stack architecture:
 - **Backend Unit Tests:** 38 passed (`node:test`)
 - **Backend Integration Tests:** 43 passed (HTTP + Live PostgreSQL 18.6)
-- **Frontend Unit Tests:** 27 passed (Vitest + React Testing Library)
+- **Frontend Unit Tests:** 57 passed (Vitest + React Testing Library)
 
 ```powershell
 # 1. Run all backend tests (server directory)
@@ -200,7 +200,7 @@ npm test
 - [x] **Phase 3 Standards Update:** 35 Unit Tests (`node:test`) + 40 Integration Tests = 75 passing tests, full documentation suite (`docs/`)
 - [x] **Phase 4A: Frontend Redux Toolkit Dashboard & Hotel Listing** (Owner dashboard, real DB metrics, debounced search, responsive card grid, 27 Vitest tests, visual identity tokens)
 - [x] **Phase 4A Review & Corrections:** Added `GET /api/hotels/stats` (PostgreSQL server aggregation), corrected terminology ("Total Properties", "Properties with Images"), verified browser search (`?title=sea`), verified currency consistency (USD), tested across 10 viewports (360px to 1440px), 108/108 automated tests passing.
-- [ ] **Phase 4B: Hotel Creation & Editing with Live Image Upload** (Client-side validation, object URL preview, multipart PUT/POST)
+- [x] **Phase 4B: Hotel Creation & Editing with Live Image Upload** (Reusable HotelForm for /hotels/new and /hotels/:id/edit, URL.createObjectURL lifecycle management, memory leak prevention, field validation matching backend rules, existing image preservation, 52 frontend unit tests, verified across 10 viewports)
 - [ ] **Phase 4C: Hotel Detail View & Interactive Leaflet Map** (Marker rendering, interactive coordinates, SEO metadata)
 - [ ] **Phase 5: Deployment & Twelve-Factor Cloud Configuration** (Render / Cloud deployment, durable storage documentation)
 

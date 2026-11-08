@@ -15,10 +15,15 @@ describe('HotelCard Component', () => {
     image_path: '/uploads/hotels/sample.jpg',
   };
 
-  it('formats prices correctly using USD currency format', () => {
-    expect(formatPrice('249.99')).toBe('$249.99');
-    expect(formatPrice(150)).toBe('$150.00');
-    expect(formatPrice('invalid')).toBe('$0.00');
+  it('formats prices using currency-neutral format by default, or configured currency when specified', () => {
+    // Default currency-neutral format
+    expect(formatPrice('249.99')).toBe('249.99');
+    expect(formatPrice(150)).toBe('150.00');
+    expect(formatPrice('invalid')).toBe('0.00');
+
+    // Explicit currency code formatting
+    expect(formatPrice('249.99', 'USD')).toBe('$249.99');
+    expect(formatPrice('249.99', 'EUR')).toBe('€249.99');
   });
 
   it('renders hotel details accurately', () => {
@@ -29,8 +34,7 @@ describe('HotelCard Component', () => {
     );
 
     expect(screen.getByText('Seaside Paradise Resort')).toBeInTheDocument();
-    expect(screen.getByText('$249.99')).toBeInTheDocument();
-    expect(screen.getByText('/ night')).toBeInTheDocument();
+    expect(screen.getByText('249.99')).toBeInTheDocument();
     expect(
       screen.getByText(/A beachfront oasis with luxury suites/)
     ).toBeInTheDocument();

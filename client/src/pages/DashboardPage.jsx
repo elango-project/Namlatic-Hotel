@@ -26,7 +26,7 @@ function DashboardPage() {
         <title>Dashboard | Namlatic Hotel Owner Portal</title>
         <meta
           name="description"
-          content="Property management dashboard for Namlatic hotel owners. Overview hotel inventory statistics, average nightly rates, and recent listings."
+          content="Property management dashboard for Namlatic hotel owners. Overview hotel inventory statistics, average prices, and recent listings."
         />
       </Helmet>
 
@@ -84,7 +84,7 @@ function DashboardPage() {
 
         <div className="metric-card">
           <div className="metric-header">
-            <span className="metric-title">Average Nightly Rate</span>
+            <span className="metric-title">Average Price</span>
             <div className="metric-icon-box metric-orange">
               <svg className="metric-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
@@ -104,7 +104,7 @@ function DashboardPage() {
 
         <div className="metric-card">
           <div className="metric-header">
-            <span className="metric-title">Rate Range</span>
+            <span className="metric-title">Price Range</span>
             <div className="metric-icon-box metric-yellow">
               <svg className="metric-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
