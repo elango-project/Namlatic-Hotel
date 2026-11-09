@@ -11,8 +11,8 @@ describe('Unit Tests: hotel.validator.js', () => {
   // validateHotelId
   // --------------------------------------------------------------------------
   describe('validateHotelId()', () => {
-    it('accepts valid positive integer strings', () => {
-      const validCases = ['1', '42', '1000', '9999999999'];
+    it('accepts valid positive integer strings up to PostgreSQL BIGINT maximum', () => {
+      const validCases = ['1', '42', '1000', '9999999999', '9223372036854775807'];
       for (const id of validCases) {
         const res = validateHotelId(id);
         assert.equal(res.isValid, true, `Expected ${id} to be valid`);
@@ -20,10 +20,31 @@ describe('Unit Tests: hotel.validator.js', () => {
       }
     });
 
-    it('accepts numeric positive integers and converts to string', () => {
+    it('rejects numbers exceeding PostgreSQL BIGINT maximum (9223372036854775808)', () => {
+      const res = validateHotelId('9223372036854775808');
+      assert.equal(res.isValid, false);
+      assert.match(res.error, /exceeds maximum PostgreSQL BIGINT limit/i);
+    });
+
+    it('accepts numeric positive safe integers and converts to string', () => {
       const res = validateHotelId(15);
       assert.equal(res.isValid, true);
       assert.equal(res.value, '15');
+
+      const maxSafeRes = validateHotelId(Number.MAX_SAFE_INTEGER); // 9007199254740991
+      assert.equal(maxSafeRes.isValid, true);
+      assert.equal(maxSafeRes.value, '9007199254740991');
+    });
+
+    it('rejects unsafe JavaScript integers when passed as numeric types', () => {
+      // Numbers exceeding Number.MAX_SAFE_INTEGER lose precision in standard JS Number
+      const unsafeInt = Number.MAX_SAFE_INTEGER + 1; // 9007199254740992
+      const res = validateHotelId(unsafeInt);
+      assert.equal(res.isValid, false);
+      assert.match(res.error, /positive integer greater than zero/);
+
+      const hugeNumber = 1e25;
+      assert.equal(validateHotelId(hugeNumber).isValid, false);
     });
 
     it('rejects zero ("0" and 0)', () => {
@@ -54,6 +75,49 @@ describe('Unit Tests: hotel.validator.js', () => {
       assert.equal(validateHotelId(undefined).isValid, false);
       assert.equal(validateHotelId('').isValid, false);
       assert.equal(validateHotelId('   ').isValid, false);
+    });
+
+    it('rejects leading, trailing, and surrounding whitespace without trimming (whitespace regression)', () => {
+      assert.equal(validateHotelId('123').isValid, true);
+      assert.equal(validateHotelId(' 123').isValid, false);
+      assert.equal(validateHotelId('123 ').isValid, false);
+      assert.equal(validateHotelId(' 123 ').isValid, false);
+    });
+
+    it('verifies exact regression suite required for BIGINT route ID validation', () => {
+      // "123" — valid
+      const v123 = validateHotelId('123');
+      assert.equal(v123.isValid, true);
+      assert.equal(v123.value, '123');
+
+      // " 123" — invalid (leading whitespace)
+      assert.equal(validateHotelId(' 123').isValid, false);
+
+      // "123 " — invalid (trailing whitespace)
+      assert.equal(validateHotelId('123 ').isValid, false);
+
+      // " 123 " — invalid (surrounding whitespace)
+      assert.equal(validateHotelId(' 123 ').isValid, false);
+
+      // "0" — invalid (zero is not a positive ID)
+      assert.equal(validateHotelId('0').isValid, false);
+
+      // Maximum PostgreSQL BIGINT — valid (9223372036854775807)
+      const vMax = validateHotelId('9223372036854775807');
+      assert.equal(vMax.isValid, true);
+      assert.equal(vMax.value, '9223372036854775807');
+
+      // Maximum PostgreSQL BIGINT + 1 — invalid (9223372036854775808)
+      assert.equal(validateHotelId('9223372036854775808').isValid, false);
+
+      // "12abc" — invalid (alphanumeric letters)
+      assert.equal(validateHotelId('12abc').isValid, false);
+
+      // "-123" — invalid (negative integer)
+      assert.equal(validateHotelId('-123').isValid, false);
+
+      // "12.5" — invalid (decimal float)
+      assert.equal(validateHotelId('12.5').isValid, false);
     });
   });
 

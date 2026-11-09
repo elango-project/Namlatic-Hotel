@@ -105,6 +105,7 @@ namlatic-hotel-portal/
 │   │   │   ├── HotelCard.jsx          # Property card with image fallback & actions
 │   │   │   ├── HotelCardSkeleton.jsx  # Shimmer loading placeholder
 │   │   │   ├── HotelForm.jsx          # Reusable Add/Edit form with live preview & validation
+│   │   │   ├── HotelLocationMap.jsx   # Interactive Leaflet map with custom retina pins & popup
 │   │   │   ├── FilterToolbar.jsx      # Debounced search & price filters
 │   │   │   ├── Pagination.jsx         # Server-side pagination controls
 │   │   │   ├── DeleteConfirmModal.jsx # Accessible delete confirmation modal
@@ -116,6 +117,7 @@ namlatic-hotel-portal/
 │   │   │   └── MainLayout.jsx         # Sidebar navigation, top bar, connection badge
 │   │   ├── pages/
 │   │   │   ├── DashboardPage.jsx      # Server-aggregated KPIs, quick actions, recent items
+│   │   │   ├── HotelDetailsPage.jsx   # Detailed property view, hero image, facts & map (Phase 4C)
 │   │   │   ├── HotelFormPage.jsx      # Page container for Create and Edit routes
 │   │   │   ├── LandingPage.jsx        # Landing hero and portal overview
 │   │   │   └── MyHotelsPage.jsx       # Inventory grid, filter toolbar & pagination
@@ -124,8 +126,10 @@ namlatic-hotel-portal/
 │   │   ├── styles/
 │   │   │   ├── index.css              # Design tokens, reset, typography
 │   │   │   └── App.css                # Layout, components, and responsive rules
-│   │   ├── test/                      # Vitest unit test suites (52 tests)
+│   │   ├── test/                      # Vitest unit test suites (98 tests)
 │   │   │   ├── setup.js
+│   │   │   ├── HotelDetailsPage.test.jsx
+│   │   │   ├── HotelLocationMap.test.jsx
 │   │   │   ├── HotelForm.test.jsx
 │   │   │   ├── HotelFormPage.test.jsx
 │   │   │   ├── HotelCard.test.jsx
@@ -177,15 +181,28 @@ namlatic-hotel-portal/
                           │     └── <RecentPropertiesGrid>
                           │           └── <HotelCard> (x3 preview)
                           │
-                          └── Route: "/hotels" ──> <MyHotelsPage>
-                                ├── <FilterToolbar> (Debounced search, min/max price)
-                                ├── Status: loading ──> <HotelCardSkeleton> (x6 shimmer)
-                                ├── Status: error   ──> <ErrorAlert> (retry trigger)
-                                ├── Status: empty   ──> <EmptyState> (zero results)
-                                ├── Status: success ──> <HotelCardGrid>
-                                │     └── <HotelCard> (xN responsive grid)
-                                ├── <Pagination> (Page numbers, records range, prev/next)
-                                └── <DeleteConfirmModal> (Accessible modal with focus trap)
+                          ├── Route: "/hotels" ──> <MyHotelsPage>
+                          │     ├── <FilterToolbar> (Debounced search, min/max price)
+                          │     ├── Status: loading ──> <HotelCardSkeleton> (x6 shimmer)
+                          │     ├── Status: error   ──> <ErrorAlert> (retry trigger)
+                          │     ├── Status: empty   ──> <EmptyState> (zero results)
+                          │     ├── Status: success ──> <HotelCardGrid>
+                          │     │     └── <HotelCard> (xN responsive grid)
+                          │     ├── <Pagination> (Page numbers, records range, prev/next)
+                          │     └── <DeleteConfirmModal> (Accessible modal with focus trap)
+                          │
+                          ├── Route: "/hotels/new" | "/hotels/:id/edit" ──> <HotelFormPage>
+                          │     └── <HotelForm> (Add/Edit property with live preview)
+                          │
+                          └── Route: "/hotels/:id" ──> <HotelDetailsPage>
+                                ├── <Helmet> (Dynamic property title & meta description)
+                                ├── <Breadcrumbs> (My Hotels / Property title)
+                                ├── <Header> (Title, coordinate badge, Edit Hotel & Back buttons)
+                                ├── <HeroMediaSection> (Image / Accessible No Image placeholder)
+                                ├── <FactsGrid> (Price, Geolocation, Audit History timestamps)
+                                ├── <DescriptionSection> (Full property description)
+                                └── <LocationMapSection>
+                                      └── <HotelLocationMap> (Leaflet 1.9.4 OSM map with marker pin & popup)
 ```
 
 ### 4.2 Redux State & Async Data Flow
@@ -351,3 +368,117 @@ The application does not assume a specific currency (e.g., USD or INR):
 - **Default Display:** Formats prices as clean numbers with standard grouping and two decimal places (e.g., `250.00`, `1,250.50`).
 - **Configuration (`VITE_APP_CURRENCY`):** If set to an ISO 4217 code (e.g., `USD`, `EUR`, `INR`), `formatCurrency` and `getCurrencySymbol` automatically format prices with the corresponding symbol (e.g., `$250.00`, `€250.00`, `₹250.00`).
 - **Filter Inputs:** The minimum/maximum price input fields conditionally render the currency symbol only when configured, ensuring visual harmony in both neutral and localized modes.
+
+---
+
+## 6. Hotel Details Page & Interactive Location Map Architecture (Phase 4C)
+
+### 6.1 Route Architecture & Route Parameter Validation
+
+The Details view is served at the dynamic parameterized route `/hotels/:id`.
+1. **Route Precedence in React Router 7:**
+   - Static routes (`/hotels/new`) are defined prior to dynamic parameterized routes (`/hotels/:id`) to prevent Route Shadowing, ensuring `/hotels/new` is never misparsed as an ID parameter `new`.
+   - The route pattern `/hotels/:id/edit` precedes `/hotels/:id` to correctly prioritize edit mode.
+2. **Strict Route Parameter Validation & PostgreSQL BIGINT Support:**
+   - In `HotelDetailsPage.jsx` and `HotelFormPage.jsx`, the route parameter `:id` is validated via `isValidRouteId(id)` against PostgreSQL signed `BIGINT` range: $1 \le \text{id} \le 9{,}223{,}372{,}036{,}854{,}775{,}807$ ($2^{63}-1$).
+   - The validation enforces digits-only (`/^\d+$/`) directly on the original string without trimming (strictly rejecting leading, trailing, and surrounding whitespace) and parses using native `BigInt(id)` without converting to a JavaScript `Number`. This prevents the silent precision degradation that occurs when 64-bit integers exceed JavaScript's `Number.MAX_SAFE_INTEGER` ($2^{53}-1 = 9{,}007{,}199{,}254{,}740{,}991$).
+   - If an invalid parameter is detected (e.g., `/hotels/abc`, `/hotels/-5`, `/hotels/0`, `/hotels/12.34`, or overflowing IDs $> 9223372036854775807`), state `idValidationError` is set immediately.
+   - The original ID string is preserved across API boundaries (`fetchHotelById(id)`), ensuring full fidelity with PostgreSQL's 64-bit `BIGINT` primary keys.
+   - The component displays an `ErrorAlert` banner with a "Return to My Hotels" action without issuing an unnecessary backend HTTP request.
+3. **Promise Abort and Lifecycle Cleanup:**
+   - When `fetchHotelById(id)` is dispatched, its RTK abort controller promise is stored.
+   - Upon component unmount, `promise.abort()` is executed to cancel any pending HTTP requests, and `clearCurrentHotel()` is dispatched to clear `currentHotel` from the Redux store. This guarantees that stale property data never flashes when the owner navigates to another hotel.
+
+### 6.2 Leaflet 1.9.4 & React Leaflet 4.2.1 Integration
+
+Map rendering is implemented via the isolated `<HotelLocationMap />` component using **Leaflet 1.9.4** and **React Leaflet 4.2.1**:
+1. **Zero External API Keys:**
+   - Leaflet is completely open-source and utilizes OpenStreetMap raster tile servers, requiring no paid API keys, credit cards, or external proprietary SDKs.
+2. **Vite Asset Bundler Path Resolution:**
+   - Leaflet's default icon implementation dynamically infers image paths relative to its own stylesheet, which breaks in Vite due to asset hashing in production.
+   - `HotelLocationMap.jsx` resolves this by importing marker assets directly:
+     ```javascript
+     import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
+     import markerIcon from 'leaflet/dist/images/marker-icon.png';
+     import markerShadow from 'leaflet/dist/images/marker-shadow.png';
+
+     const hotelMarkerIcon = L.icon({
+       iconUrl: markerIcon,
+       iconRetinaUrl: markerIcon2x,
+       shadowUrl: markerShadow,
+       iconSize: [25, 41],
+       iconAnchor: [12, 41],
+       popupAnchor: [1, -34],
+       shadowSize: [41, 41],
+     });
+     ```
+   - This ensures Vite hashes and bundles all retina marker assets correctly during `npm run build`.
+3. **Exact Anchor Offsets:**
+   - `iconAnchor: [12, 41]` ensures the sharp bottom tip of the 25x41px pin aligns precisely with the geographic point coordinate, regardless of map zoom level.
+   - `popupAnchor: [1, -34]` anchors the popup tooltip directly above the pin without obscuring the marker head.
+4. **Dynamic Map-Center Synchronization via `MapViewController` (Primitive Prop Dependencies):**
+   - In React Leaflet, the `MapContainer`'s `center` and `zoom` properties are purely initial values and are immutable after initial mount. If an owner navigates from `/hotels/66` to `/hotels/67` without a page reload, the map viewport remains locked at the first hotel's coordinates unless explicitly updated.
+   - **Why Primitive Props Matter:** If an array `center={[lat, lng]}` is passed to a child component, JavaScript creates a new array object reference on every parent re-render. Since `[lat, lng] !== [lat, lng]` by reference equality, a `useEffect([center, ...])` would trigger on *every* unrelated render (e.g. title edits, hover states, image loading), continually calling `map.setView()` and resetting any manual pan or zoom gestures made by the user.
+   - **Corrected Architecture:** `MapViewController` accepts distinct primitive numbers (`latitude`, `longitude`, `zoom`):
+     ```javascript
+     export function MapViewController({ latitude, longitude, zoom = 14 }) {
+       const map = useMap();
+       useEffect(() => {
+         if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+           map.setView([latitude, longitude], zoom);
+         }
+       }, [latitude, longitude, zoom, map]);
+       return null;
+     }
+     ```
+   - Because `latitude` and `longitude` are primitive numbers, `useEffect` uses `Object.is()` comparison and executes *only* when coordinates genuinely change, leaving manual user pan/zoom intact during unrelated re-renders.
+
+### 6.3 Coordinate Parsing & Geographic Bounds Validation
+
+1. **PostgreSQL NUMERIC Precision Handling:**
+   - Coordinates stored in PostgreSQL `NUMERIC(10,6)` or `NUMERIC(11,6)` columns are transmitted as strings over JSON (e.g., `"24.453884"`).
+   - In `HotelLocationMap`, coordinates are parsed safely via `Number(val)` with explicit `Number.isFinite()` and bounds validation.
+2. **Geographic Bounds Enforcement:**
+   - Function `isValidCoordinate(lat, lng)` verifies:
+     - $-90.0 \le \text{latitude} \le +90.0$
+     - $-180.0 \le \text{longitude} \le +180.0$
+     - Values are finite numbers (not `NaN`, `null`, `undefined`, or `Infinity`).
+   - Valid negative coordinates (e.g. Sydney `-33.8688, 151.2093` or Santiago `-33.4489, -70.6693`) are accepted and correctly centered.
+3. **Graceful Fallback State:**
+   - If coordinates are out of bounds or invalid, `HotelLocationMap` renders a clean, accessible `<div class="map-unavailable-container">` with an SVG alert icon, describing that coordinates are outside valid geographic bounds, without throwing unhandled JavaScript exceptions or blanking the page.
+
+### 6.4 OpenStreetMap Policy Compliance & Production Tile Scaling
+
+In compliance with the official **OpenStreetMap Foundation Tile Usage Policy** (https://operations.osmfoundation.org/policies/tiles/):
+- **Tile URL Standard:** The application uses `https://tile.openstreetmap.org/{z}/{x}/{y}.png`. It explicitly avoids deprecated `{s}.` subdomain sharding (`a.tile`, `b.tile`, `c.tile`), which was an HTTP/1.1 workaround now discouraged under HTTP/2.
+- **Attribution:** The `<TileLayer />` provides visible, hyperlinked attribution identifying `© OpenStreetMap contributors` with a link to `https://www.openstreetmap.org/copyright`.
+- **Resource Protection:**
+  - No bulk tile scraping, offline prefetching, or speculative preloading is implemented. Tiles are requested strictly on-demand as map areas become visible.
+  - Browser caching is fully respected; no cache-busting queries or `no-cache` headers are sent.
+  - Standard browser `Referer` headers are preserved without restrictive `no-referrer` policies.
+- **Availability SLA & Production Options:**
+  - Standard OpenStreetMap public tile servers operate on donated server resources with best-effort availability and **no guaranteed Service Level Agreement (SLA)**.
+  - For high-volume production deployments, commercial tile providers (Mapbox, Stadia Maps, Jawg Maps, CartoDB) or self-hosted vector/raster tile infrastructure (e.g., Mapnik, TileServer-GL, or OpenMapTiles on cloud Kubernetes) should be configured.
+
+### 6.5 Dynamic SEO & Head Management with React Helmet Async
+
+Page-specific metadata is dynamically injected into the document head via `<Helmet>` from `react-helmet-async`:
+1. **Dynamic Document Title:**
+   - Success state: `<title>{hotel.title} | Namlatic Hotel Portal</title>`
+   - 404 state: `<title>Hotel Not Found | Namlatic Hotel Portal</title>`
+   - Loading/Default state: `<title>Hotel Details | Namlatic Hotel Portal</title>`
+2. **Meta Description:**
+   - Generates meta description dynamically truncated to 155 characters with ellipsis to conform to search engine snippet best practices.
+3. **Heading Hierarchy:**
+   - Main page title is the single `<h1>` (`.details-title`).
+   - Major content divisions use `<h2>` with accessible `aria-labelledby` linkages (`#desc-heading`, `#map-heading`).
+
+### 6.6 Visual Hierarchy, Hero Media & Audit History
+
+1. **Hero Media & Zero Fake Stock Photo Fallback:**
+   - If `hotel.image_path` is present and valid, renders a responsive `<img>` element with descriptive alt text (`Exterior view of {hotel.title}`).
+   - If `hotel.image_path` is `null` or if the image fails to load (`onError`), it renders a clean, dedicated SVG building illustration placeholder labeled **"No Image Available"**. It never introduces fake generic stock photos or unbranded external placeholders.
+2. **Facts Summary Cards:**
+   - Price: Formatted using configurable `formatCurrency` with caption "Listed price".
+   - Coordinates: Displays formatted WGS 84 geolocation coordinates with degree notation.
+   - Audit History: Displays localized "Created" and "Updated" timestamps (`Intl.DateTimeFormat`) only if returned by the PostgreSQL backend. If timestamps are absent, the card section is omitted.

@@ -12,6 +12,7 @@ import {
 } from '../features/hotels/hotelsSlice';
 import HotelForm from '../components/HotelForm';
 import ErrorAlert from '../components/ErrorAlert';
+import { isValidRouteId } from './HotelDetailsPage';
 
 /**
  * HotelFormPage handles both:
@@ -37,9 +38,10 @@ function HotelFormPage() {
   // When in edit mode, fetch existing hotel by ID
   useEffect(() => {
     if (isEdit) {
-      // Validate that ID is a positive integer
-      if (!/^\d+$/.test(id) || parseInt(id, 10) <= 0) {
-        setIdValidationError('Invalid hotel ID parameter. ID must be a positive integer.');
+      if (!isValidRouteId(id)) {
+        setIdValidationError(
+          'Invalid hotel ID parameter. ID must be a positive integer within PostgreSQL BIGINT range (1 to 9223372036854775807).'
+        );
         return;
       }
       setIdValidationError(null);

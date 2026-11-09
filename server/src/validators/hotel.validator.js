@@ -212,35 +212,54 @@ const validateListHotels = (query) => {
   return { isValid: true, errors: [], value };
 };
 
+const PG_BIGINT_MAX = 9223372036854775807n;
+
 /**
  * Validates a hotel ID from route parameters (GET, PUT, DELETE /api/hotels/:id).
- * Rejects non-integer, zero, negative, or malformed IDs.
+ * Rejects non-integer, zero, negative, or malformed IDs, or IDs exceeding PostgreSQL BIGINT.
  *
  * @param {any} rawId - The route param ID
  * @returns {{ isValid: boolean, error?: string, value?: string }}
  */
 const validateHotelId = (rawId) => {
-  if (rawId === undefined || rawId === null || String(rawId).trim() === '') {
+  if (rawId === undefined || rawId === null || rawId === '') {
     return { isValid: false, error: 'Hotel ID is required.' };
   }
 
-  const idStr = String(rawId).trim();
-
-  // Reject anything that is not strictly positive digits (no negatives, decimals, zero, letters)
-  if (!/^[1-9]\d*$/.test(idStr)) {
+  // Handle number input (e.g. from internal calls / tests) vs string
+  let idStr;
+  if (typeof rawId === 'string') {
+    idStr = rawId; // Do NOT trim: preserve original string directly to reject whitespace
+  } else if (typeof rawId === 'number' && Number.isSafeInteger(rawId) && rawId > 0) {
+    idStr = String(rawId);
+  } else {
     return {
       isValid: false,
       error: 'Hotel ID must be a valid positive integer greater than zero.',
     };
   }
 
-  // Ensure it can be parsed as a valid BigInt without overflow issues
+  // Require decimal digits only: rejects leading/trailing whitespace, signs, decimals, letters, scientific notation
+  if (!/^\d+$/.test(idStr)) {
+    return {
+      isValid: false,
+      error: 'Hotel ID must be a valid positive integer greater than zero.',
+    };
+  }
+
+  // Ensure it can be parsed as a valid BigInt within PostgreSQL BIGINT range (1 to 2^63-1)
   try {
     const bigIntVal = BigInt(idStr);
     if (bigIntVal <= 0n) {
       return {
         isValid: false,
         error: 'Hotel ID must be a valid positive integer greater than zero.',
+      };
+    }
+    if (bigIntVal > PG_BIGINT_MAX) {
+      return {
+        isValid: false,
+        error: 'Hotel ID exceeds maximum PostgreSQL BIGINT limit (9223372036854775807).',
       };
     }
   } catch (_e) {

@@ -19,8 +19,8 @@ Our testing architecture strictly separates **Unit Tests** from **Integration Te
 Built entirely using Node.js's built-in `node:test` framework to avoid bloating `node_modules` with third-party runners.
 
 ### Test Suites:
-1. **`hotel.validator.test.js` (22 tests):**
-   - `validateHotelId()`: Positive integer acceptance, zero/negative rejection, decimal rejection, string injection defense.
+1. **`hotel.validator.test.js` (26 tests):**
+   - `validateHotelId()`: Positive integer acceptance up to BIGINT max, safe integer vs unsafe integer handling, zero/negative rejection, decimal rejection, string injection defense, strict whitespace rejection without trimming, and BIGINT regression suite.
    - `validateCreateHotel()`: Title/description length and whitespace rules, coordinate limits ($-90..90$, $-180..180$) and 6-decimal precision, price positivity, 2-decimal scale, and `NaN` rejection.
    - `validateListHotels()`: Default limits/offsets, pagination bounds ($1..100$), search query trimming, `minPrice > maxPrice` rejection.
 2. **`security.test.js` (13 tests):**
@@ -54,7 +54,7 @@ Communicates over HTTP to an isolated Express test instance on port 5001 connect
 
 Built using **Vitest** + **React Testing Library** + **@testing-library/jest-dom** with `jsdom`:
 
-### Test Suites Breakdown (57 tests):
+### Test Suites Breakdown (98 tests):
 1. **`HotelCard.test.jsx` (4 tests):**
    - Renders hotel title, formatted price (currency-neutral `250.00` by default, or `$250.00` when configured), coordinates (`24.4539°, 54.3773°`), and description snippet.
    - Renders accessible fallback SVG badge ("No Image Available") when `image_path` is null.
@@ -102,38 +102,65 @@ Built using **Vitest** + **React Testing Library** + **@testing-library/jest-dom
    - Dynamic accessible name (`aria-label`) aligned with visible state.
    - Input file resetting on invalid selection.
    - React StrictMode mount/unmount resilience.
-7. **`HotelFormPage.test.jsx` (6 tests):**
+7. **`HotelFormPage.test.jsx` (7 tests):**
    - Route parsing for `/hotels/new` (create mode) and `/hotels/:id/edit` (edit mode).
-   - Non-numeric or negative ID parameter validation.
+   - Non-numeric ID parameter validation.
+   - Rejection of route ID exceeding PostgreSQL BIGINT maximum (`9223372036854775808`).
    - Graceful 404 handling with ErrorAlert and Return button.
    - Edit form pre-population from API.
    - Create property submission and navigation.
    - Complete edit flow: field mutation, Redux items update, list refresh trigger, and navigation.
-   - `deleteHotel.fulfilled`: Removes the deleted hotel from state by ID and resets `deleteStatus`.
-   - `fetchHotelStats.pending`: Sets `statsStatus: 'loading'` and clears error.
-   - `fetchHotelStats.fulfilled`: Populates `stats` object with server aggregates (`totalProperties`, `averagePrice`, `minPrice`, `maxPrice`, `propertiesWithImages`).
-   - `fetchHotelStats.rejected`: Sets `statsStatus: 'failed'` and captures error message.
-3. **`FilterToolbar.test.jsx` (4 tests):**
-   - Renders search input with placeholder and min/max price inputs.
-   - Calls `onFilterChange` debounced after typing search query.
-   - Shows validation warning if `minPrice > maxPrice`.
-   - Calls `onReset` and clears input fields when "Reset" button is clicked.
-4. **`Pagination.test.jsx` (4 tests):**
-   - Renders record range ("Showing 1 to 6 of 12 properties") and disables Prev button on page 1.
-   - Calls `onPageChange` with target page number when page button clicked.
-   - Disables Next button on the final page.
-   - Renders null when `totalPages <= 1` (no unnecessary controls displayed).
-5. **`EmptyAndErrorStates.test.jsx` (4 tests):**
-   - `EmptyState`: Renders empty title, message, and action button.
-   - `EmptyState`: Triggers `onAction` callback when action button clicked.
-   - `ErrorAlert`: Renders error message and "Try Again" retry button.
-   - `ErrorAlert`: Triggers `onRetry` callback on click.
+8. **`HotelLocationMap.test.jsx` (15 tests - Phase 4C):**
+   - `isValidCoordinate`: Validates standard coordinates `(24.453884, 54.377344)` and `(0, 0)`.
+   - `isValidCoordinate`: Accepts boundary coordinates `(90, 180)` and `(-90, -180)`.
+   - `isValidCoordinate`: Accepts valid southern and western negative coordinates (Sydney `-33.8688, 151.2093`, Santiago `-33.4489, -70.6693`).
+   - `isValidCoordinate`: Rejects out-of-range latitude (`90.000001`, `-90.000001`, `120`, `-150`).
+   - `isValidCoordinate`: Rejects out-of-range longitude (`180.000001`, `-180.000001`, `200`, `-200`).
+   - `isValidCoordinate`: Rejects `NaN`, `Infinity`, and non-numeric values.
+   - Component rendering: Renders map container with valid coordinates and correct `aria-label`.
+   - Component rendering: Safely parses string coordinates from PostgreSQL `NUMERIC` columns.
+   - Component rendering: Renders map with negative coordinates.
+   - Component rendering: Verifies compliant OpenStreetMap tile URL (`https://tile.openstreetmap.org/{z}/{x}/{y}.png`).
+   - Component rendering: Renders accessible `map-unavailable` fallback when latitude > 90.
+   - Component rendering: Renders accessible `map-unavailable` fallback when longitude < -180.
+   - Component rendering: Renders fallback when coordinates are non-numeric strings or `NaN`.
+   - Dynamic map-center update: Verifies `MapViewController` calls `map.setView()` and moves marker when coordinates change after mount.
+   - Effect stability: Verifies `MapViewController` does NOT call `map.setView()` again on unrelated parent rerenders with unchanged coordinates.
+9. **`HotelDetailsPage.test.jsx` (28 tests - Phase 4C):**
+   - `formatDateTime`: Formats ISO timestamps into localized dates (`Nov 6, 2026, 4:00 PM`).
+   - `formatDateTime`: Returns `null` for null, undefined, or empty timestamps.
+   - `formatDateTime`: Returns `null` for invalid date strings.
+   - `isValidRouteId`: Accepts valid small and large BIGINT strings up to `9223372036854775807`.
+   - `isValidRouteId`: Rejects numbers exceeding PostgreSQL BIGINT maximum (`9223372036854775808`).
+   - `isValidRouteId`: Rejects zero, negative numbers, decimals, and malformed strings.
+   - `isValidRouteId`: Rejects leading, trailing, and surrounding whitespace without trimming.
+   - `isValidRouteId`: Full regression suite verifying required boundary and invalid inputs.
+   - Route validation: Accepts valid large PostgreSQL BIGINT ID (`9223372036854775807`) and dispatches string ID.
+   - Route validation: Rejects non-numeric hotel ID (`/hotels/abc`) and displays error alert.
+   - Route validation: Rejects route parameter with whitespace (`/hotels/ 123`) without calling API.
+   - Route validation: Rejects negative ID (`/hotels/-10`) without API fetch.
+   - Route validation: Rejects zero ID (`/hotels/0`) without API fetch.
+   - Route validation: Rejects decimal ID (`/hotels/12.34`) without API fetch.
+   - Route validation: Rejects malformed strings (`/hotels/12abc`) without API fetch.
+   - Route validation: Rejects IDs exceeding PostgreSQL BIGINT maximum (`9223372036854775808`).
+   - Loading state: Renders loading spinner and message while fetching details.
+   - 404 Not Found: Renders dedicated 404 state with property ID and "Return to My Hotels" button.
+   - General error: Renders `ErrorAlert` banner with "Try Again" retry action on network failure.
+   - Success rendering: Renders title, coordinates pill, price, description, and location map.
+   - Hero media: Renders `<img>` when `image_path` is present.
+   - Fallback media: Renders clean SVG "No Image Available" placeholder when `image_path` is null.
+   - Media error handling: Falls back to placeholder if image fails to load (`onError` event).
+   - Audit history: Renders "Created" and "Updated" timestamps when returned by backend.
+   - Audit history: Omits audit history section when timestamps are null.
+   - Navigation links: "Edit Hotel" links to `/hotels/:id/edit` and "Back to My Hotels" links to `/hotels`.
+   - Dynamic navigation: Handles route ID change without page reload (`/hotels/71` to `/hotels/72`), updating map props.
+   - Cleanup on unmount: Dispatches `clearCurrentHotel()` and aborts active promise when unmounting.
 
 ---
 
 ## 5. Running the Tests
 
-### Backend Tests (81 tests):
+### Backend Tests (84 tests):
 From the `server` directory:
 ```powershell
 # Run all backend tests (Unit tests + Integration tests)
@@ -146,7 +173,7 @@ npm run test:unit
 npm run test:integration
 ```
 
-### Frontend Tests (52 tests):
+### Frontend Tests (102 tests):
 From the `client` directory:
 ```powershell
 # Run all frontend unit tests with Vitest
@@ -157,10 +184,10 @@ npm run test:watch
 ```
 
 ### Total Test Suite Count:
-- **Backend Unit Tests:** 38 passed
+- **Backend Unit Tests:** 42 passed
 - **Backend Integration Tests:** 43 passed
-- **Frontend Unit Tests:** 52 passed
-- **Total Automated Tests:** **133 / 133 passed (100% pass rate)**
+- **Frontend Unit Tests:** 102 passed
+- **Total Automated Tests:** **187 / 187 passed (100% pass rate)**
 
 ---
 

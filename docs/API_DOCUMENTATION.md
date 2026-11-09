@@ -139,11 +139,27 @@ Eliminates in-memory pagination distortion by aggregating across the entire data
 ---
 
 ### `GET /api/hotels/:id`
-Retrieves a single hotel record by primary key ID.
+Retrieves a single hotel record by primary key ID, providing complete metadata for the Hotel Details view (`/hotels/:id`).
 
 - **URL Parameter:** `:id` *(positive integer)*
 - **Responses:**
-  - `200 OK`: Returns single hotel object in `data`.
+  - `200 OK`:
+    ```json
+    {
+      "status": "success",
+      "data": {
+        "id": "71",
+        "title": "Luxury Marina Resort",
+        "description": "An exquisite 5-star beachfront retreat offering panoramic marina views, fine dining, and private beach access.",
+        "latitude": "24.453884",
+        "longitude": "54.377344",
+        "price": "850.00",
+        "image_path": "/uploads/hotels/8f6a3d12-15a2-4a2e-8d8f-4d92a0123456.jpg",
+        "created_at": "2026-11-06T10:30:00.000Z",
+        "updated_at": "2026-11-08T14:45:00.000Z"
+      }
+    }
+    ```
   - `400 Bad Request`: ID is non-integer, zero, or negative.
   - `404 Not Found`: Hotel with ID does not exist.
 

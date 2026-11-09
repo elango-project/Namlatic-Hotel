@@ -91,6 +91,43 @@ describe('HotelFormPage Component (Phase 4B)', () => {
     expect(screen.getByText(/invalid hotel id parameter/i)).toBeInTheDocument();
   });
 
+  it('rejects route ID exceeding PostgreSQL BIGINT maximum (9223372036854775808)', () => {
+    const store = createMockStore();
+    render(
+      <Provider store={store}>
+        <HelmetProvider>
+          <MemoryRouter initialEntries={['/hotels/9223372036854775808/edit']}>
+            <Routes>
+              <Route path="/hotels/:id/edit" element={<HotelFormPage />} />
+            </Routes>
+          </MemoryRouter>
+        </HelmetProvider>
+      </Provider>
+    );
+
+    expect(screen.getByTestId('invalid-id-error')).toBeInTheDocument();
+    expect(hotelApi.getHotelById).not.toHaveBeenCalled();
+  });
+
+  it('rejects route ID containing whitespace in edit mode (e.g. " 123")', () => {
+    const store = createMockStore();
+    render(
+      <Provider store={store}>
+        <HelmetProvider>
+          <MemoryRouter initialEntries={['/hotels/ 123/edit']}>
+            <Routes>
+              <Route path="/hotels/:id/edit" element={<HotelFormPage />} />
+            </Routes>
+          </MemoryRouter>
+        </HelmetProvider>
+      </Provider>
+    );
+
+    expect(screen.getByTestId('invalid-id-error')).toBeInTheDocument();
+    expect(screen.getByText(/invalid hotel id parameter/i)).toBeInTheDocument();
+    expect(hotelApi.getHotelById).not.toHaveBeenCalled();
+  });
+
   it('handles 404 / Hotel Not Found gracefully and displays ErrorAlert with Return button', async () => {
     hotelApi.getHotelById.mockRejectedValueOnce(new Error('Hotel not found.'));
 
