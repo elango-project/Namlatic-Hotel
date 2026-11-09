@@ -2,7 +2,7 @@
 
 A full-stack Hotel Inventory Management System built for hotel owners to create, view, search, update, and manage hotel properties.
 
-Built in accordance with the **[Twelve-Factor App](https://12factor.net/)** methodology, featuring native PostgreSQL parameterized SQL, image binary magic byte security, and comprehensive unit and integration testing.
+The project uses React, Node.js, Express and PostgreSQL, with parameterized SQL, validated image uploads, automated testing, and documented Twelve-Factor App considerations. Cloud deployment and durable media storage are planned for Phase 5.
 
 ---
 
@@ -56,7 +56,7 @@ namlatic-hotel-portal/
 │   ├── API_DOCUMENTATION.md           # Complete REST API specifications & schemas
 │   ├── TESTING_GUIDE.md               # Unit, integration, and UI testing methodologies
 │   ├── TECHNICAL_DECISIONS.md         # Technology trade-offs and architectural justifications
-│   ├── TWELVE_FACTOR_COMPLIANCE.md    # 12-Factor App audit and persistent storage notes
+│   ├── TWELVE_FACTOR_COMPLIANCE.md    # Twelve-Factor App considerations and durable storage notes
 │   └── INTERVIEW_PREPARATION.md       # Technical interview questions and concept defense
 ├── client/                            # Frontend Single Page Application
 │   ├── src/
@@ -214,5 +214,5 @@ npm test
 - 🔌 [Complete API Documentation](docs/API_DOCUMENTATION.md)
 - 🧪 [Testing Guide](docs/TESTING_GUIDE.md)
 - 💡 [Technical Decisions & Rationale](docs/TECHNICAL_DECISIONS.md)
-- ☁️ [Twelve-Factor App Compliance Audit](docs/TWELVE_FACTOR_COMPLIANCE.md)
+- ☁️ [Twelve-Factor App Considerations](docs/TWELVE_FACTOR_COMPLIANCE.md)
 - 🎓 [Technical Interview Preparation Guide](docs/INTERVIEW_PREPARATION.md)
