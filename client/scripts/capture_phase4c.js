@@ -6,10 +6,21 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DOCS_DIR = path.resolve(__dirname, '../../docs/screenshots/phase4c');
-const ARTIFACT_DIR = path.resolve('C:/Users/ELANGO/.gemini/antigravity/brain/2c8b7069-505b-4464-9e06-9427c75bd5ac/screenshots');
+const DOCS_DIR = process.env.SCREENSHOT_OUTPUT_DIR
+  ? path.resolve(process.env.SCREENSHOT_OUTPUT_DIR)
+  : path.resolve(__dirname, '../../docs/screenshots/phase4c');
 
-[DOCS_DIR, ARTIFACT_DIR].forEach((dir) => {
+// Optional secondary artifact directory if configured via environment variable
+const ARTIFACT_DIR = process.env.ARTIFACT_DIR
+  ? path.resolve(process.env.ARTIFACT_DIR)
+  : null;
+
+const targetDirs = [DOCS_DIR];
+if (ARTIFACT_DIR) {
+  targetDirs.push(ARTIFACT_DIR);
+}
+
+targetDirs.forEach((dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -30,9 +41,11 @@ const VIEWPORTS = [
 
 function saveScreenshot(sourceBuffer, filename) {
   const docsPath = path.join(DOCS_DIR, filename);
-  const artifactPath = path.join(ARTIFACT_DIR, filename);
   fs.writeFileSync(docsPath, sourceBuffer);
-  fs.writeFileSync(artifactPath, sourceBuffer);
+  if (ARTIFACT_DIR) {
+    const artifactPath = path.join(ARTIFACT_DIR, filename);
+    fs.writeFileSync(artifactPath, sourceBuffer);
+  }
   console.log(`Saved screenshot: ${filename}`);
 }
 

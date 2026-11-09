@@ -146,6 +146,7 @@ namlatic-hotel-portal/
    npm run dev
    ```
    The application will be available at `http://localhost:5173`.
+3. *(Optional)* Configure `VITE_APP_CURRENCY` in `client/.env` (e.g. `VITE_APP_CURRENCY=USD`). By default, prices are displayed in a clean, currency-neutral numeric format (e.g. `250.00`) without assuming any currency.
 
 ---
 
@@ -198,10 +199,10 @@ npm test
 - [x] **Phase 3A: Hotel Collection APIs** (`POST /api/hotels`, `GET /api/hotels`, search, filters, pagination)
 - [x] **Phase 3B: Hotel Single-Record APIs** (`GET /api/hotels/:id`, `PUT /api/hotels/:id`, `DELETE /api/hotels/:id`, transactional file rotation)
 - [x] **Phase 3 Standards Update:** 35 Unit Tests (`node:test`) + 40 Integration Tests = 75 passing tests, full documentation suite (`docs/`)
-- [x] **Phase 4A: Frontend Redux Toolkit Dashboard & Hotel Listing** (Owner dashboard, real DB metrics, debounced search, responsive card grid, 27 Vitest tests, visual identity tokens)
-- [x] **Phase 4A Review & Corrections:** Added `GET /api/hotels/stats` (PostgreSQL server aggregation), corrected terminology ("Total Properties", "Properties with Images"), verified browser search (`?title=sea`), verified currency consistency (USD), tested across 10 viewports (360px to 1440px), 108/108 automated tests passing.
-- [x] **Phase 4B: Hotel Creation & Editing with Live Image Upload** (Reusable HotelForm for /hotels/new and /hotels/:id/edit, URL.createObjectURL lifecycle management, memory leak prevention, field validation matching backend rules, existing image preservation, 52 frontend unit tests, verified across 10 viewports)
-- [x] **Phase 4C: Hotel Details Page & Interactive Location Map** (Dynamic `/hotels/:id` route, PostgreSQL BIGINT string validation up to 9223372036854775807, MapViewController with primitive numeric props preventing unnecessary map resets, hero image with zero-fake-photo fallback, WGS 84 coordinate badges, Leaflet 1.9.4 & React Leaflet 4.2.1 OpenStreetMap rendering with compliant tile URL & attribution, marker popup, SEO tags via React Helmet Async, abort signal cleanup, 98 frontend unit tests, 0 horizontal overflow across 10 viewports)
+- [x] **Phase 4A: Frontend Redux Toolkit Dashboard & Hotel Listing** (Owner dashboard, real DB metrics, debounced search, responsive card grid, visual identity tokens)
+- [x] **Phase 4A Review & Corrections:** Added `GET /api/hotels/stats` (PostgreSQL server aggregation), corrected terminology ("Total Properties", "Properties with Images"), verified browser search (`?title=sea`), established neutral default currency formatting (configurable via `VITE_APP_CURRENCY`), tested across 10 viewports (360px to 1440px), 108 automated tests passing at phase completion.
+- [x] **Phase 4B: Hotel Creation & Editing with Live Image Upload** (Reusable `HotelForm` for `/hotels/new` and `/hotels/:id/edit`, `URL.createObjectURL` lifecycle management, memory leak prevention, field validation matching backend rules, existing image preservation, 30 phase-specific frontend unit tests, verified across 10 viewports)
+- [x] **Phase 4C: Hotel Details Page & Interactive Location Map** (Dynamic `/hotels/:id` route, PostgreSQL BIGINT string validation without trimming or precision loss, `MapViewController` with primitive numeric props preventing unnecessary map resets, hero image with zero-fake-photo fallback, WGS 84 coordinate badges, Leaflet 1.9.4 & React Leaflet 4.2.1 OpenStreetMap rendering with compliant tile URL & attribution, marker popup, SEO tags via React Helmet Async, abort signal cleanup, 43 phase-specific frontend unit tests, 0 horizontal overflow across 10 viewports. Current full-suite total: 187 automated tests passing: 42 backend unit, 43 backend integration, 102 frontend unit)
 - [ ] **Phase 5: Deployment & Twelve-Factor Cloud Configuration** (Render / Cloud deployment, durable storage documentation)
 
 ---
