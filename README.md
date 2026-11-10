@@ -211,20 +211,25 @@ npm test
 - [x] **Phase 5E: Vercel Routing & Frontend Cloud Configuration** (Vercel project root `client/vercel.json` with official schema, Vite SPA fallback rewrite `/(.*) -> /index.html` supporting deep link refresh, baseline security headers `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, `Strict-Transport-Security: max-age=31536000`, `Permissions-Policy`, CSP compatibility analysis for OpenStreetMap/Leaflet/preview blobs with production template, authoritative `client/.env.example` with secrets exclusion, automated validation tests, 314 automated tests passing)
 - [x] **Phase 5E.1: Frontend Production Environment Validation** (Strict production `VITE_API_URL` validation enforcing HTTPS and `/api` path convention, automatic origin derivation reducing duplicate configuration, HTTPS production origin validation, media URL preservation without appending `/api`, CSP architecture documentation corrections omitting OpenStreetMap from `connect-src`, 331 automated tests passing)
 - [x] **Phase 5E.2: Final Frontend Environment and Media URL Safety** (Made `VITE_API_URL` strictly mandatory in production while rejecting legacy `VITE_API_BASE_URL` fallback, hardened URL validation rejecting embedded credentials, query strings, URL fragments, and localhost, implemented mixed-content defense in `getImageUrl()` rejecting HTTP images in production while permitting them in development, 340 automated tests passing)
-- [ ] **Phase 5F: Cloud Database & Service Deployment** (Neon PostgreSQL provisioning, Render Web Service deployment, database schema initialization)
+- [x] **Phase 5F-A1: Owner Authentication Architecture & Security Design** (Comprehensive read-only architectural specification for same-origin Vercel proxy, Argon2id credentials, tokenless CSRF with `X-Requested-With`, PostgreSQL-backed sessions, and DoS-resilient abuse throttling without account lockout)
+- [x] **Phase 5F-A2.1: Authentication Database & Password Infrastructure** (Incremental PostgreSQL migration `002_create_auth_tables.sql` establishing `users` singleton and `sessions` tables, transactional `migrate.js` runner, Argon2id password service with process-local bounded concurrency semaphore, strict Unicode code-point validation, one-time owner bootstrap CLI, and administrative password recovery CLI. 379 automated tests passing)
+- [ ] **Phase 5F-A2.2: Backend Authentication Middleware & Route Lockdown** (Session token issuance/revocation, `__Host-` cookie management, tokenless CSRF middleware, timing-safe proxy-secret validation, and `/api/hotels/*` route protection)
+- [ ] **Phase 5F-A2.3: Backend Security Verification** (Full backend integration tests, direct API isolation, error handling, regression audit)
+- [ ] **Phase 5F-A3: Frontend Authentication UI & Protected Routing** (Login page, Redux authSlice, ProtectedRoute, session bootstrap, logout control)
+- [ ] **Phase 5F-B: Cloud Resource Provisioning** (Neon PostgreSQL, Render Web Service, Cloudflare R2 bucket, Vercel proxy configuration)
 - [ ] **Phase 5G: Production End-to-End & Security Verification** (Live cloud verification, CORS validation, SSL audit, probe monitoring)
 
 ---
 
-## 8. Important Security Notice: Owner Authentication Requirement
+## 8. Important Security Notice: Owner Authentication Status
 
 > [!WARNING]
-> **Owner Authentication Requirement Before Public Production Exposure:**
-> The backend write endpoints (`POST /api/hotels`, `PUT /api/hotels/:id`, `DELETE /api/hotels/:id`) currently remain **unauthenticated**. While Phase 5C introduces rate limiting to protect write endpoints from denial-of-service abuse and strict CORS origin matching, **rate limiting and CORS do not provide owner identity, tenancy, or authorization**.
+> **Owner Authentication Foundation Established (Route Lockdown in Progress - Phase 5F-A2.2):**
+> Phase 5F-A2.1 implemented the credential storage, database schema (`users` singleton and `sessions` tables), Argon2id hashing service, owner bootstrap CLI, and administrative password recovery CLI.
 >
-> The API is **not** safe for unrestricted public write access. Any caller within their rate limit quota can create, modify, or delete hotel listings.
+> However, **the HTTP route protection layer is scheduled for Phase 5F-A2.2**. In this current subphase, write endpoints (`POST /api/hotels`, `PUT /api/hotels/:id`, `DELETE /api/hotels/:id`) are not yet intercepted by authentication middleware.
 >
-> Before exposing this application to an unauthenticated public production environment, a formal access-control mechanism must be implemented: either adding an owner authentication layer (e.g., JWT / session-based authentication) or restricting write endpoints to authorized administrators while maintaining the public demo as read-only. Access control must be enforced strictly at the backend API layer.
+> The API must **not** be deployed publicly or exposed to unauthenticated internet traffic until Phase 5F-A2.2 (backend route protection) and Phase 5F-A3 (frontend auth & protected routes) are completed. Access control must be enforced strictly at the backend API layer.
 
 ---
 

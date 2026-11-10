@@ -704,3 +704,106 @@ When deploying to Vercel in future phases:
    - (Optional) Add `VITE_APP_CURRENCY`: e.g. `USD`
 5. Click **Deploy**. Vercel will build from `client/` and deploy the static bundle to the global edge network.
 6. Verify SPA routing by refreshing on `/hotels/new` or `/hotels/:id`.
+
+---
+
+## 10. Authentication Architecture & Password Infrastructure (Phase 5F-A2.1)
+
+### 10.1 Authentication Data Schema & Relational Model
+Phase 5F-A2.1 establishes the database schema for owner credentials and PostgreSQL-backed session management via an incremental, transactional migration runner (`server/src/database/migrate.js`).
+
+1. **`users` Table (Owner Account Singleton):**
+   - Stores the single authorized owner account for property portfolio administration.
+   - **Schema:**
+     - `id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY`
+     - `email VARCHAR(255) NOT NULL UNIQUE`
+     - `password_hash VARCHAR(255) NOT NULL` (Argon2id encoded hash)
+     - `role VARCHAR(50) NOT NULL DEFAULT 'owner'`
+     - `status VARCHAR(50) NOT NULL DEFAULT 'active'`
+     - `created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP`
+     - `updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP`
+   - **Singleton Constraint:** Enforced via a PostgreSQL partial unique index:
+     ```sql
+     CREATE UNIQUE INDEX idx_users_owner_singleton ON users (role) WHERE role = 'owner';
+     ```
+     This strictly guarantees that at most one owner account can exist in the database, even across concurrent execution anomalies.
+   - **Email Normalization Check:** `CONSTRAINT chk_users_email_normalized CHECK (email = lower(trim(email)) AND position('@' in email) > 1)`.
+
+2. **`sessions` Table (PostgreSQL Session Store):**
+   - Implements the split-token session architecture approved in Phase 5F-A1.4.
+   - **Schema:**
+     - `id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY`
+     - `user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE`
+     - `token_hash VARCHAR(64) NOT NULL UNIQUE` (SHA-256 verifier hex digest)
+     - `expires_at TIMESTAMPTZ NOT NULL` (7-day absolute lifetime)
+     - `idle_expires_at TIMESTAMPTZ NOT NULL` (2-hour rolling inactivity timeout)
+     - `created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP`
+     - `last_active_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP`
+     - `revoked_at TIMESTAMPTZ` (set on explicit logout or administrative password reset)
+     - `ip_address INET` (optional audit field for network anomaly detection)
+     - `user_agent VARCHAR(512)` (optional audit field for device tracking)
+   - **Indexing Strategy:**
+     - `token_hash` has an automatic unique B-tree index created by its `UNIQUE` constraint; no duplicate index is created.
+     - `idx_sessions_user_id`: Fast lookup for user-specific sessions and foreign key cascade maintenance.
+     - `idx_sessions_cleanup`: Composite index on `(expires_at, idle_expires_at)` enabling efficient background sweeping of dead sessions.
+
+### 10.2 Argon2id Cryptographic Configuration
+Password hashing utilizes the reference `argon2` Node.js library configured to OWASP RFC 9106 standards:
+- **Type:** Argon2id (resistant against both GPU side-channel attacks and cache-timing attacks)
+- **Memory Cost:** `65536` KiB (64 MiB RAM per hash)
+- **Time Cost:** `3` iterations
+- **Parallelism:** `1` thread
+- **Digest Length:** `32` bytes
+- **Salt:** `16` cryptographically secure random bytes generated per hash operation.
+
+### 10.3 Password & Email Validation Rules
+- **Email Validation:** Standard syntax validation; normalized to lowercase and trimmed before storage.
+- **Minimum Password Length:** Enforced using distinct **Unicode code points**:
+  ```javascript
+  Array.from(password).length >= 12
+  ```
+  Surrogate pairs (emojis, astral symbols) count as single code points. For example, 12 emojis (48 UTF-8 bytes, 24 UTF-16 units) pass validation, while 11 emojis (22 UTF-16 units) are strictly rejected.
+- **Maximum Password Size:** Enforced using raw **UTF-8 bytes**:
+  ```javascript
+  Buffer.byteLength(password, 'utf8') <= 128
+  ```
+  This bounds memory and CPU consumption against malicious algorithmic complexity payloads.
+- **Password Immutability:** Passwords are **never** trimmed (`.trim()`), normalized (`.normalize()`), lowercased, or mutated in any form. Leading, trailing, and internal whitespace characters are preserved as valid entropy.
+
+### 10.4 Process-Local Bounded Concurrency Semaphore
+Because Argon2id allocates 64 MiB of memory and consumes significant CPU per hash, uncontrolled concurrency could starve Node.js worker threads and block the event loop.
+- **Active Operations:** Maximum `2` concurrent active Argon2id operations.
+- **Queued Operations:** Maximum `5` waiting tasks.
+- **Queue Timeout:** `3,000 ms` maximum wait before failing fast with `code: 'HASHING_OVERLOAD'` (suitable for HTTP 503 `Retry-After: 3`).
+- **Process-Local Scope:** This concurrency limiter is process-local to the single container instance. Horizontal multi-replica deployments would coordinate via external queues or dedicated authentication services.
+
+### 10.5 One-Time Owner Account Bootstrap (`bootstrap-owner.js`)
+- **Execution:** Invoked via `npm run db:bootstrap` (CLI only; no public HTTP route).
+- **Credentials:** Ingested via temporary environment variables (`OWNER_EMAIL`, `OWNER_PASSWORD`) or masked terminal input (`readline`). Passwords are never accepted as command-line arguments or logged.
+- **Transaction Safety & Advisory Locking:**
+  1. Computes Argon2id hash **before** acquiring a database connection, preventing idle locks during CPU computation.
+  2. Acquires connection and executes `BEGIN`.
+  3. Obtains transaction-scoped non-blocking advisory lock: `SELECT pg_try_advisory_xact_lock(987654321)`.
+  4. If lock is unavailable: exits cleanly with status `'locked'`.
+  5. Queries existing owner (`SELECT id FROM users WHERE role = 'owner' LIMIT 1 FOR UPDATE`).
+  6. If owner exists: commits and exits cleanly with status `'exists'` (never overwrites).
+  7. Inserts owner with precomputed hash, commits, and automatically releases lock upon transaction termination.
+
+### 10.6 Administrative Password Recovery (`reset-owner-password.js`)
+- **Execution:** Invoked via `npm run db:reset-password` (CLI only).
+- **Procedure:**
+  1. Ingests new password via `NEW_OWNER_PASSWORD` or masked terminal input.
+  2. Precomputes Argon2id hash.
+  3. Acquires transaction and advisory lock.
+  4. Verifies existing owner account (errors out if none exists).
+  5. Updates owner's `password_hash` and `updated_at`.
+  6. Revokes all active owner sessions atomically:
+     ```sql
+     UPDATE sessions SET revoked_at = statement_timestamp() WHERE user_id = $1 AND revoked_at IS NULL;
+     ```
+  7. Commits transaction and releases connection.
+
+### 10.7 Status & Scope Boundaries
+Phase 5F-A2.1 implements the credential, database, and CLI infrastructure only.
+- HTTP login/logout endpoints, session cookie management (`__Host-namlatic_session`), CSRF middleware (`X-Requested-With`), timing-safe Vercel proxy-secret validation, and route protection for `/api/hotels/*` are scheduled for **Phase 5F-A2.2**.
+- The API write endpoints remain unauthenticated until Phase 5F-A2.2 is complete.

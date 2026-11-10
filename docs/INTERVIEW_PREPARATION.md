@@ -376,3 +376,54 @@ This guide prepares you to defend every engineering decision in the Namlatic Hot
 >    - In development, HTTP image URLs remain supported for local testing.
 >    - Absolute HTTPS URLs, Cloudflare R2 public CDN URLs (`https://pub-*.r2.dev/hotels/...`), SVG fallback `data:` URIs, and preview `blob:` URIs are preserved without rewriting.
 >    - Legacy relative paths (`/uploads/hotels/photo.jpg`) are resolved against `API_ORIGIN` without appending `/api`."
+
+---
+
+### Q36: Why was Argon2id selected over bcrypt or PBKDF2 for owner credential hashing?
+> **Answer:** "Argon2 is the winner of the Password Hashing Competition (PHC) and is the current standard recommended by OWASP and RFC 9106.
+> 1. **Memory-Hard Defense Against ASIC/GPU Clusters:** Traditional algorithms like bcrypt and PBKDF2 are primarily compute-bound. An adversary with a cluster of modern GPUs or custom ASICs can compute millions of candidate hashes in parallel because those algorithms require virtually zero RAM. In contrast, Argon2id is intentionally **memory-hard**; our configuration allocates **64 MiB (`65536` KiB) of RAM per hash operation**. A GPU with 16 GB of VRAM can only fit ~250 parallel Argon2id instances at a time, making offline brute-force attacks economically and computationally infeasible.
+> 2. **Side-Channel & Cache-Timing Resistance:** Argon2id is a hybrid of Argon2d (data-dependent memory access) and Argon2i (data-independent memory access). It utilizes data-independent passes in early rounds to thwart CPU cache-timing side-channel attacks, and data-dependent passes in later rounds to maximize resistance against GPU cracking.
+> 3. **Configured Parameters:**
+>    - Algorithm: `argon2id` (v13)
+>    - Memory cost: `65536` KiB (64 MiB)
+>    - Time cost: `3` iterations
+>    - Parallelism: `1` thread
+>    - Hash length: `32` bytes
+>    - Salt: `16` cryptographically random bytes generated automatically per hash."
+
+---
+
+### Q37: Why must password length be validated using Unicode code points rather than JavaScript `password.length`, and why must passwords never be trimmed or normalized?
+> **Answer:** "In JavaScript, `string.length` measures 16-bit **UTF-16 code units**, not human-perceived characters or Unicode code points:
+> 1. **Surrogate Pair Distortion:** Characters outside the Basic Multilingual Plane (BMP) — such as emoji (`🏨`, `🔑`), historical scripts, and mathematical symbols — require two UTF-16 code units (a surrogate pair). A password consisting of 6 emojis (`🏨🔑🌴🏨🔑🌴`) has a JavaScript `.length` of 12. If validation relied on `.length >= 12`, an 6-character emoji passphrase would pass an intended 12-character minimum policy.
+> 2. **Accurate Code-Point Counting:** By using `Array.from(password).length >= 12`, the JavaScript runtime iterates over actual **Unicode code points**. 12 emojis produce an `Array.from` length of 12, whereas 11 emojis produce length 11 and are correctly rejected.
+> 3. **DoS Defense via UTF-8 Byte Cap:** To defend against algorithmic complexity and memory exhaustion attacks (e.g. an attacker submitting a 10 MB password string to saturate the CPU during hashing), we enforce a complementary check: `Buffer.byteLength(password, 'utf8') <= 128`. Code-point counting and UTF-8 byte counting are completely separate, complementary validations.
+> 4. **Password Immutability (Zero Trimming or Normalization):**
+>    - **No Trimming:** Passphrases frequently contain intentional leading, trailing, or multiple consecutive spaces (`'  correct horse battery staple  '`). Trimming strips valid entropy chosen by the owner.
+>    - **No Normalization:** Applying Unicode normalization (`.normalize('NFC')` or `'NFD'`) alters character byte representations depending on client OS, keyboard input methods, and platform rendering engines. Normalizing can mutate credentials and lock users out. The raw string as received over HTTPS is validated and passed directly to Argon2id."
+
+---
+
+### Q38: How does the Argon2 concurrency semaphore prevent server starvation under authentication load?
+> **Answer:** "Because Argon2id is computationally and memory intensive (64 MiB RAM and significant CPU per hash), an uncontrolled spike in login or hashing requests could saturate Node.js's libuv worker threadpool, starving the event loop and rendering health checks or property listing endpoints unresponsive.
+> 1. **Bounded Active Execution:** We implemented `ArgonSemaphore` (`server/src/utils/argonSemaphore.js`), which enforces a hard ceiling of **2 concurrent active Argon2id operations** on the single Node.js process.
+> 2. **Bounded Queue & Timeout:** The semaphore maintains a queue capped at **5 waiting requests** with a strict **3,000 ms queue timeout**.
+> 3. **Controlled Fast Overload (HTTP 503):** If an 8th request arrives while 2 are active and 5 are queued, or if a queued request waits longer than 3 seconds without an available slot, the semaphore immediately rejects with a controlled error (`code: 'HASHING_OVERLOAD'`, `statusCode: 503`, `retryAfter: 3`).
+> 4. **Resource Recovery:** Task completion is wrapped in a `finally` block, ensuring active counters are decremented and queued items are dequeued even if a hashing task throws an exception."
+
+---
+
+### Q39: How does the one-time owner bootstrap script use PostgreSQL transaction-scoped advisory locks to ensure idempotency and prevent race conditions?
+> **Answer:** "In cloud container platforms like Render or AWS ECS, multiple containers or CI/CD deployment tasks may boot concurrently or execute provisioning scripts in parallel:
+> 1. **Precomputing Hashes Before DB Connection:** In `bootstrap-owner.js`, the expensive Argon2id hash is computed **before** acquiring a database connection from the pool or opening a transaction. This ensures the database transaction and lock are held only for microseconds, preventing connection starvation.
+> 2. **Transaction-Scoped Advisory Lock:** The script begins a transaction and executes:
+>    ```sql
+>    SELECT pg_try_advisory_xact_lock(987654321) AS acquired;
+>    ```
+>    `pg_try_advisory_xact_lock` is non-blocking. If another bootstrap process currently holds the application lock, it immediately returns `false`. The script logs that another process is running, rolls back, and exits cleanly with code 0.
+> 3. **Automatic Lock Lifecycle:** Because the lock is transaction-scoped (`_xact_`), PostgreSQL automatically releases it the instant the transaction executes `COMMIT` or `ROLLBACK`, eliminating any risk of orphaned locks on crash.
+> 4. **Row Lock & Partial Unique Index:** Within the transaction, the script checks `SELECT id FROM users WHERE role = 'owner' LIMIT 1 FOR UPDATE`. If an owner exists, it skips insertion. As a final defense-in-depth guarantee, the schema enforces a partial unique index:
+>    ```sql
+>    CREATE UNIQUE INDEX idx_users_owner_singleton ON users (role) WHERE role = 'owner';
+>    ```
+>    Even across transaction isolation anomalies or manual SQL executions, PostgreSQL's index engine strictly prevents a second owner row from ever being inserted."

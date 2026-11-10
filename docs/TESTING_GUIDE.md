@@ -56,6 +56,14 @@ Built entirely using Node.js's built-in `node:test` framework to avoid bloating 
    - Public URL resolution: Verifies `r2:hotels/<uuid>.<ext>` references resolve dynamically to `https://${R2_PUBLIC_BASE_URL}/hotels/<uuid>.<ext>`.
    - Reference deletion: Verifies `DeleteObjectCommand` strips `r2:` prefix and handles nonexistent objects gracefully without throwing.
    - Local adapter regression: Verifies legacy `/uploads/hotels/<filename>` resolution, directory traversal protection (`..`), protected file guards (`.gitkeep`), and safe ENOENT tolerance.
+7. **`password.service.test.js` (25 tests - Phase 5F-A2.1):**
+   - Email normalization & validation: Leading/trailing whitespace and uppercase conversion (`"  Owner@Namlatic.COM  "` -> `"owner@namlatic.com"`), rejection of invalid formats, empty/whitespace strings, non-string types, and strings > 255 chars.
+   - Unicode code-point password validation: Minimum 12 Unicode code points (`Array.from(p).length >= 12`), acceptance of 12 multi-byte emojis (48 UTF-8 bytes, 24 UTF-16 code units), rejection of 11 emojis despite having 22 UTF-16 code units.
+   - UTF-8 byte boundary: Acceptance of 128 UTF-8 bytes (`Buffer.byteLength(p, 'utf8') <= 128`), rejection of 129 bytes.
+   - Password immutability: Strict preservation of leading, trailing, and internal spaces without trimming; preservation of raw decomposed/combining Unicode characters without normalization or casing mutation.
+   - Argon2id cryptographic parameters: Verification of OWASP parameters (`memoryCost: 65536`, `timeCost: 3`, `parallelism: 1`, `hashLength: 32`), generation of unique salt hashes, verification of matching passwords, rejection of incorrect passwords, fast failure on invalid input, and safe handling of malformed hashes.
+   - Constant-time dummy hash: Availability of valid precomputed Argon2id hash for user-not-found timing protection.
+   - Bounded concurrency semaphore: Max 2 concurrent active tasks, queuing up to 5 tasks, immediate rejection (`HTTP 503 Retry-After: 3`) on queue overflow, 3000ms queue timeout with automatic queue cleanup, and active count recovery on task exceptions.
 
 ---
 
@@ -70,8 +78,8 @@ Communicates over HTTP to an isolated Express test instance on port 5001 connect
 - **Part 1 (POST):** Valid creation with/without JPEG and PNG, validation errors, magic bytes spoofing, 5 MB limit, and upload file cleanup on failure.
 - **Part 2 (GET List):** Retrieval of collection, prefix search (`lower(title) LIKE lower($1) || '%'`), price range filters, pagination slices, and parameter validation.
 - **Part 3 (GET Detail):** Retrieval of existing record, 404 on nonexistent record, 400 on non-integer, zero, and negative IDs.
-- **Part 4 (PUT):** Update without image (preserves old image), update with new image (deletes old image from disk), invalid updates (preserves existing image and cleans up new upload), 404 handling.
-- **Part 5 (DELETE):** Deletion of hotel with image (verifies physical file removed), deletion without image, 404 handling, and graceful tolerance when image is already missing from disk.
+- **Part 4 (PUT):** Update without image (preserves old image), update with new image (deletes old image from configured storage provider: local disk in dev/test, Cloudflare R2 in prod), invalid updates (preserves existing image and cleans up new upload), 404 handling.
+- **Part 5 (DELETE):** Deletion of hotel with image (verifies object removed from configured storage provider), deletion without image, 404 handling, and graceful tolerance when image is already missing from storage provider.
 - **Part 6 (GET /api/hotels/stats):** Verifies HTTP 200 aggregate structure, total properties exact database count match, and properties with images strictly reflecting non-null `image_path` records in PostgreSQL.
 - **Part 7 (Security & Storage Integrity):** Path traversal block verification, confirmation of zero orphaned files in `server/src/uploads/hotels`.
 - **Part 8 (Database Connectivity & Health Probes - Phase 5B):** Liveness probe (`GET /api/health`), readiness probe (`GET /api/ready`), and database connection pool verification.
@@ -94,6 +102,13 @@ Communicates over HTTP to an isolated Express test instance on port 5001 connect
   - Test 61: R2 deletion failure tolerance on hotel deletion (database deletion succeeds, logs orphan warning, returns HTTP 200 without rollback).
   - Test 62: Legacy local image reference compatibility (retrieval and updates correctly resolve and delete legacy `/uploads/hotels/...` references alongside R2).
   - Test 63: Database connection acquisition failure during update (compensating delete of newly uploaded R2 object when `db.pool.connect()` fails, safely bypassing rollback/release on unacquired client).
+- **Part 11 (Authentication Schema, Migrations & CLI Tools - Phase 5F-A2.1, 14 tests in `tests/integration/auth.database.test.js`):**
+  - Migration repeat-safety: Re-running `runMigrations()` is idempotent, succeeds without re-applying, and records migration versions in `schema_migrations`.
+  - Users schema: Columns (`id`, `email`, `password_hash`, `role`, `status`, `created_at`, `updated_at`), email uniqueness constraint (`23505`), partial unique index singleton (`idx_users_owner_singleton`), and email normalization check constraint (`chk_users_email_normalized`).
+  - Sessions schema: Columns, token hash uniqueness constraint (`23505`), timestamp constraints (`chk_sessions_expires_after_created`), and foreign-key cascade (`ON DELETE CASCADE` removes user sessions upon user deletion).
+  - One-time owner bootstrap CLI: Initial account creation, Argon2id verification of stored hash, non-overwriting behavior on subsequent runs, and race-condition safety under concurrent execution via advisory lock `pg_try_advisory_xact_lock`.
+  - Administrative password recovery CLI: Updating owner password hash, revoking all active sessions atomically, and clean rejection when no owner exists.
+  - Data isolation: Zero modification or loss of existing hotel inventory records.
 
 ---
 
