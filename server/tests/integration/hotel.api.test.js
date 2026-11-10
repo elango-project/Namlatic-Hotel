@@ -1019,6 +1019,123 @@ async function runIntegrationTests() {
         pool.query = originalQuery;
       }
     }
+
+    // -------------------------------------------------------------
+    // PART 9: EXPRESS PRODUCTION HARDENING & SECURITY (PHASE 5C)
+    // -------------------------------------------------------------
+    console.log('\n--- PART 9: Express Production Hardening & Security (Phase 5C) ---');
+
+    // Test 47: Security Headers (Helmet nosniff, frameguard, referrer, CORP, CSP)
+    {
+      const res = await fetch(`http://localhost:${PORT}/api/health`);
+      const nosniff = res.headers.get('x-content-type-options');
+      const frameOptions = res.headers.get('x-frame-options');
+      const referrer = res.headers.get('referrer-policy');
+      const corp = res.headers.get('cross-origin-resource-policy');
+      const csp = res.headers.get('content-security-policy');
+
+      assert(
+        'SECURITY HEADERS: Helmet headers configured correctly (nosniff, frameguard, referrer, corp, csp)',
+        nosniff === 'nosniff' &&
+          frameOptions === 'DENY' &&
+          referrer === 'strict-origin-when-cross-origin' &&
+          corp === 'cross-origin' &&
+          Boolean(csp),
+        `nosniff=${nosniff}, frameOptions=${frameOptions}, corp=${corp}, csp=${csp}`
+      );
+    }
+
+    // Test 48: CORS Allowlist: Allowed origin receives ACAO header
+    {
+      const res = await fetch(`http://localhost:${PORT}/api/health`, {
+        headers: { Origin: 'http://localhost:5173' },
+      });
+      const acao = res.headers.get('access-control-allow-origin');
+
+      assert(
+        'CORS: Allowed origin receives Access-Control-Allow-Origin header',
+        res.status === 200 && acao === 'http://localhost:5173',
+        `status=${res.status}, acao=${acao}`
+      );
+    }
+
+    // Test 49: CORS Allowlist: Disallowed origin is rejected with HTTP 403
+    {
+      const res = await fetch(`http://localhost:${PORT}/api/health`, {
+        headers: { Origin: 'http://malicious-attacker.com' },
+      });
+      const body = await res.json().catch(() => null);
+
+      assert(
+        'CORS: Disallowed origin rejected with HTTP 403 and CORS error message',
+        res.status === 403 &&
+          body?.status === 'error' &&
+          body?.statusCode === 403 &&
+          typeof body?.message === 'string' &&
+          body.message.includes('CORS policy violation'),
+        `status=${res.status}, body=${JSON.stringify(body)}`
+      );
+    }
+
+    // Test 50: CORS Preflight: OPTIONS request from allowed origin returns HTTP 204
+    {
+      const res = await fetch(`http://localhost:${PORT}/api/hotels`, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'http://localhost:5173',
+          'Access-Control-Request-Method': 'POST',
+          'Access-Control-Request-Headers': 'Content-Type',
+        },
+      });
+      const acao = res.headers.get('access-control-allow-origin');
+      const allowMethods = res.headers.get('access-control-allow-methods');
+
+      assert(
+        'CORS: Preflight OPTIONS request returns HTTP 204 with allowed methods',
+        res.status === 204 &&
+          acao === 'http://localhost:5173' &&
+          allowMethods?.includes('POST'),
+        `status=${res.status}, acao=${acao}, allowMethods=${allowMethods}`
+      );
+    }
+
+    // Test 51: Body Size Limits: JSON body exceeding 10kb returns HTTP 413
+    {
+      const largePayload = {
+        title: 'Large Hotel',
+        description: 'X'.repeat(15 * 1024), // 15 KB (exceeds 10kb limit)
+      };
+
+      const res = await fetch(`http://localhost:${PORT}/api/hotels`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(largePayload),
+      });
+      const body = await res.json().catch(() => null);
+
+      assert(
+        'BODY LIMIT: JSON payload exceeding 10kb returns HTTP 413 Payload Too Large',
+        res.status === 413 &&
+          body?.status === 'error' &&
+          body?.statusCode === 413 &&
+          body?.message?.includes('Request payload too large'),
+        `status=${res.status}, body=${JSON.stringify(body)}`
+      );
+    }
+
+    // Test 52: Rate Limiting & Exemption: Health and ready probes are exempt from rate limiting
+    {
+      const healthRes = await fetch(`http://localhost:${PORT}/api/health`);
+      const readyRes = await fetch(`http://localhost:${PORT}/api/ready`);
+
+      assert(
+        'RATE LIMIT: Health and ready probes remain HTTP 200 without rate-limit throttling',
+        healthRes.status === 200 && readyRes.status === 200,
+        `healthStatus=${healthRes.status}, readyStatus=${readyRes.status}`
+      );
+    }
   } finally {
     // Clean up created test hotels from database
     if (createdHotelIds.length > 0) {

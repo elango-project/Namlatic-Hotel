@@ -212,6 +212,116 @@ function validateDatabaseConfig(rawEnv = process.env) {
 }
 
 /**
+ * Parses and validates CORS origins into a list of exact allowed URLs.
+ * In production, wildcards (*) are forbidden and all entries must be valid http/https URLs.
+ * In development, standard localhost development ports are supported by default.
+ *
+ * @param {string|undefined} rawOriginStr - Comma-separated list of origins
+ * @param {string} nodeEnv - Environment mode
+ * @returns {string[]} Normalized list of allowed origins
+ */
+function parseCorsOrigins(rawOriginStr, nodeEnv = 'development') {
+  const defaultLocalOrigins = [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:4173',
+    'http://127.0.0.1:4173',
+  ];
+
+  if (!rawOriginStr || typeof rawOriginStr !== 'string' || rawOriginStr.trim() === '') {
+    return defaultLocalOrigins;
+  }
+
+  const origins = rawOriginStr
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+
+  if (origins.length === 0) {
+    return defaultLocalOrigins;
+  }
+
+  for (const origin of origins) {
+    if (origin === '*') {
+      if (nodeEnv === 'production') {
+        throw new Error('Wildcard CORS origin (*) is forbidden in production.');
+      }
+      return ['*'];
+    }
+
+    try {
+      const parsed = new URL(origin);
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error(`Invalid CORS origin protocol in "${origin}". Only http and https are allowed.`);
+      }
+      if (parsed.pathname !== '' && parsed.pathname !== '/') {
+        throw new Error(`CORS origin "${origin}" must not contain a path component.`);
+      }
+    } catch (err) {
+      throw new Error(`Invalid CORS origin "${origin}": ${err.message}`);
+    }
+  }
+
+  // In development, preserve standard localhost origins alongside custom configured ones
+  if (nodeEnv === 'development') {
+    for (const localOrigin of defaultLocalOrigins) {
+      if (!origins.includes(localOrigin)) {
+        origins.push(localOrigin);
+      }
+    }
+  }
+
+  return origins;
+}
+
+/**
+ * Parses reverse proxy trust configuration.
+ * For Render, trusting 1 hop enables accurate client IP resolution from X-Forwarded-For
+ * while preventing client IP spoofing attacks.
+ *
+ * @param {string|undefined} rawTrust - Configured TRUST_PROXY value
+ * @param {string} nodeEnv - Environment mode
+ * @returns {number|boolean} Trust proxy setting for Express
+ */
+function parseTrustProxy(rawTrust, nodeEnv = 'development') {
+  if (rawTrust !== undefined && rawTrust !== '') {
+    const trimmed = rawTrust.toString().trim().toLowerCase();
+    if (trimmed === 'true') return true;
+    if (trimmed === 'false') return false;
+    const hops = parseInt(trimmed, 10);
+    if (!isNaN(hops) && hops >= 0) {
+      return hops;
+    }
+  }
+
+  // Render operates with 1 reverse proxy hop in front of the container
+  return nodeEnv === 'production' ? 1 : false;
+}
+
+/**
+ * Parses rate limit options for write and read endpoints.
+ *
+ * @param {Record<string, string|undefined>} rawEnv
+ * @param {string} nodeEnv
+ * @returns {object} Rate limit settings
+ */
+function parseRateLimitConfig(rawEnv, nodeEnv) {
+  const enabled = rawEnv.RATE_LIMIT_ENABLED !== 'false';
+  const writeMax = parseInt(rawEnv.RATE_LIMIT_WRITE_MAX, 10) || (nodeEnv === 'test' ? 1000 : 60);
+  const writeWindowMs = parseInt(rawEnv.RATE_LIMIT_WRITE_WINDOW_MS, 10) || 15 * 60 * 1000;
+  const generalMax = parseInt(rawEnv.RATE_LIMIT_GENERAL_MAX, 10) || (nodeEnv === 'test' ? 5000 : 300);
+  const generalWindowMs = parseInt(rawEnv.RATE_LIMIT_GENERAL_WINDOW_MS, 10) || 15 * 60 * 1000;
+
+  return {
+    enabled,
+    writeMax,
+    writeWindowMs,
+    generalMax,
+    generalWindowMs,
+  };
+}
+
+/**
  * Parses and validates the complete environment configuration.
  *
  * @param {Record<string, string|undefined>} rawEnv - Environment variables map (defaults to process.env)
@@ -220,17 +330,30 @@ function validateDatabaseConfig(rawEnv = process.env) {
 function parseAndValidateEnv(rawEnv = process.env) {
   const nodeEnv = rawEnv.NODE_ENV || 'development';
   const port = parseInt(rawEnv.PORT, 10) || 5000;
+  const host = rawEnv.HOST || '0.0.0.0';
   const corsOrigin = rawEnv.CORS_ORIGIN || 'http://localhost:5173';
+  const corsOrigins = parseCorsOrigins(rawEnv.CORS_ORIGIN, nodeEnv);
+  const trustProxy = parseTrustProxy(rawEnv.TRUST_PROXY, nodeEnv);
+  const rateLimit = parseRateLimitConfig(rawEnv, nodeEnv);
+  const bodyLimit = rawEnv.BODY_LIMIT || '10kb';
 
   const dbConfig = validateDatabaseConfig(rawEnv);
 
   return {
     port,
+    host,
     nodeEnv,
     corsOrigin,
+    corsOrigins,
+    trustProxy,
+    rateLimit,
+    bodyLimit,
     ...dbConfig,
     parseDatabaseUrl,
     validateDatabaseConfig,
+    parseCorsOrigins,
+    parseTrustProxy,
+    parseRateLimitConfig,
     parseAndValidateEnv,
   };
 }

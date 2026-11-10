@@ -152,9 +152,9 @@ namlatic-hotel-portal/
 
 ## 5. Running Automated Tests
 
-The test suite includes **187 automated tests** across the entire full-stack architecture:
-- **Backend Unit Tests:** 42 passed (`node:test`)
-- **Backend Integration Tests:** 43 passed (HTTP + Live PostgreSQL 18.6)
+The test suite includes **254 automated tests** across the entire full-stack architecture:
+- **Backend Unit Tests:** 100 passed (`node:test`)
+- **Backend Integration Tests:** 52 passed (HTTP + Live PostgreSQL 18.6)
 - **Frontend Unit Tests:** 102 passed (Vitest + React Testing Library)
 
 ```powershell
@@ -177,16 +177,16 @@ npm test
 
 ## 6. API Overview
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/api/health` | Process liveness probe |
-| `GET` | `/api/ready` | PostgreSQL readiness probe |
-| `POST` | `/api/hotels` | Create hotel (multipart form data, optional photo) |
-| `GET` | `/api/hotels` | List hotels with title search, price filter, and pagination |
-| `GET` | `/api/hotels/stats` | Portfolio-wide statistics via PostgreSQL aggregation (`AVG`, `MIN`, `MAX`, counts) |
-| `GET` | `/api/hotels/:id` | Retrieve single hotel by primary key ID |
-| `PUT` | `/api/hotels/:id` | Update hotel and replace/preserve image |
-| `DELETE`| `/api/hotels/:id` | Delete hotel and purge image from disk |
+| Method | Endpoint | Description | Rate Limit |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/health` | Process liveness probe | Exempt (unthrottled) |
+| `GET` | `/api/ready` | PostgreSQL readiness probe | Exempt (unthrottled) |
+| `POST` | `/api/hotels` | Create hotel (multipart form data, optional photo) | 60 writes / 15 min |
+| `GET` | `/api/hotels` | List hotels with title search, price filter, and pagination | 300 requests / 15 min |
+| `GET` | `/api/hotels/stats` | Portfolio-wide statistics via PostgreSQL aggregation (`AVG`, `MIN`, `MAX`, counts) | 300 requests / 15 min |
+| `GET` | `/api/hotels/:id` | Retrieve single hotel by primary key ID | 300 requests / 15 min |
+| `PUT` | `/api/hotels/:id` | Update hotel and replace/preserve image | 60 writes / 15 min |
+| `DELETE`| `/api/hotels/:id` | Delete hotel and purge image from disk | 60 writes / 15 min |
 
 *For complete request/response schemas, status codes, and error formats, see [API Documentation](docs/API_DOCUMENTATION.md).*
 
@@ -202,12 +202,30 @@ npm test
 - [x] **Phase 4A: Frontend Redux Toolkit Dashboard & Hotel Listing** (Owner dashboard, real DB metrics, debounced search, responsive card grid, visual identity tokens)
 - [x] **Phase 4A Review & Corrections:** Added `GET /api/hotels/stats` (PostgreSQL server aggregation), corrected terminology ("Total Properties", "Properties with Images"), verified browser search (`?title=sea`), established neutral default currency formatting (configurable via `VITE_APP_CURRENCY`), tested across 10 viewports (360px to 1440px), 108 automated tests passing at phase completion.
 - [x] **Phase 4B: Hotel Creation & Editing with Live Image Upload** (Reusable `HotelForm` for `/hotels/new` and `/hotels/:id/edit`, `URL.createObjectURL` lifecycle management, memory leak prevention, field validation matching backend rules, existing image preservation, 30 phase-specific frontend unit tests, verified across 10 viewports)
-- [x] **Phase 4C: Hotel Details Page & Interactive Location Map** (Dynamic `/hotels/:id` route, PostgreSQL BIGINT string validation without trimming or precision loss, `MapViewController` with primitive numeric props preventing unnecessary map resets, hero image with zero-fake-photo fallback, WGS 84 coordinate badges, Leaflet 1.9.4 & React Leaflet 4.2.1 OpenStreetMap rendering with compliant tile URL & attribution, marker popup, SEO tags via React Helmet Async, abort signal cleanup, 43 phase-specific frontend unit tests, 0 horizontal overflow across 10 viewports. Current full-suite total: 187 automated tests passing: 42 backend unit, 43 backend integration, 102 frontend unit)
-- [ ] **Phase 5: Deployment & Twelve-Factor Cloud Configuration** (Render / Cloud deployment, durable storage documentation)
+- [x] **Phase 4C: Hotel Details Page & Interactive Location Map** (Dynamic `/hotels/:id` route, PostgreSQL BIGINT string validation without trimming or precision loss, `MapViewController` with primitive numeric props preventing unnecessary map resets, hero image with zero-fake-photo fallback, WGS 84 coordinate badges, Leaflet 1.9.4 & React Leaflet 4.2.1 OpenStreetMap rendering with compliant tile URL & attribution, marker popup, SEO tags via React Helmet Async, abort signal cleanup, 43 phase-specific frontend unit tests, 0 horizontal overflow across 10 viewports. 187 automated tests passing)
+- [x] **Phase 5A: Deployment Readiness & Twelve-Factor Audit** (Full-stack audit of Render, Neon, Vercel, and ephemeral filesystem boundaries)
+- [x] **Phase 5B: Backend Environment Configuration & PostgreSQL Cloud Connectivity** (`DATABASE_URL` parsing, fail-fast production defense, Neon TLS enforcement, SASL mechanism negotiation verification, shutdown idempotency, 225 automated tests passing)
+- [x] **Phase 5C: Express Backend Production Hardening for Render** (Binding to 0.0.0.0, Render `trust proxy: 1` IP anti-spoofing, strict CORS allowlist without wildcards, Helmet backend response security headers with cross-origin CORP for Leaflet/media, mutating write rate limiter, body size limits, production 500 error sanitization, 254 automated tests passing)
+- [ ] **Phase 5D: Persistent Cloud Media Storage** (Decoupled durable object storage architecture for uploaded hotel media)
+- [ ] **Phase 5E: Vercel Routing & Frontend Cloud Configuration** (Vercel configuration, SPA client-side routing fallback, production environment variables, dedicated frontend CSP and security headers)
+- [ ] **Phase 5F: Cloud Database & Service Deployment** (Neon PostgreSQL provisioning, Render Web Service deployment, database schema initialization)
+- [ ] **Phase 5G: Production End-to-End & Security Verification** (Live cloud verification, CORS validation, SSL audit, probe monitoring)
 
 ---
 
-## 8. Documentation Index
+## 8. Important Security Notice: Owner Authentication Requirement
+
+> [!WARNING]
+> **Owner Authentication Requirement Before Public Production Exposure:**
+> The backend write endpoints (`POST /api/hotels`, `PUT /api/hotels/:id`, `DELETE /api/hotels/:id`) currently remain **unauthenticated**. While Phase 5C introduces rate limiting to protect write endpoints from denial-of-service abuse and strict CORS origin matching, **rate limiting and CORS do not provide owner identity, tenancy, or authorization**.
+>
+> The API is **not** safe for unrestricted public write access. Any caller within their rate limit quota can create, modify, or delete hotel listings.
+>
+> Before exposing this application to an unauthenticated public production environment, a formal access-control mechanism must be implemented: either adding an owner authentication layer (e.g., JWT / session-based authentication) or restricting write endpoints to authorized administrators while maintaining the public demo as read-only. Access control must be enforced strictly at the backend API layer.
+
+---
+
+## 9. Documentation Index
 
 - 📘 [System Architecture](docs/ARCHITECTURE.md)
 - 🗄️ [Database Guide & Data Types](docs/DATABASE_GUIDE.md)

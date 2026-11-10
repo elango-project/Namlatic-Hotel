@@ -20,15 +20,15 @@ The Namlatic Hotel Owner Portal is engineered according to the principles of the
 > *Store config in the environment.*
 - **Status:** **Fully Compliant**
 - Strict separation of code and configuration.
-- Server uses `dotenv` to load environment variables (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `PORT`, `CORS_ORIGIN`).
-- Client uses Vite environment variables (`VITE_API_URL`).
+- Server uses `dotenv` to load environment variables (`DATABASE_URL`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `PORT`, `HOST`, `CORS_ORIGIN`, `TRUST_PROXY`, `RATE_LIMIT_*`, `BODY_LIMIT`).
+- Client uses Vite environment variables (`VITE_API_URL`, `VITE_APP_CURRENCY`).
 - All `.env` files are excluded from Git via `.gitignore`. Template `.env.example` files contain non-sensitive documentation placeholders.
 
 ## 4. Backing Services
 > *Treat backing services as attached resources.*
 - **Status:** **Fully Compliant**
 - PostgreSQL is treated as an attached backing service accessed over TCP/IP via connection pooling (`pg.Pool`).
-- Switching from a local PostgreSQL database to an Amazon RDS or Supabase managed database requires zero code modifications—only environment variable updates.
+- Switching from a local PostgreSQL database to an Amazon RDS, Supabase, or Neon managed database requires zero code modifications—only environment variable updates.
 
 ## 5. Build, Release, Run
 > *Strictly separate build and run stages.*
@@ -41,12 +41,13 @@ The Namlatic Hotel Owner Portal is engineered according to the principles of the
 > *Execute the app as one or more stateless processes.*
 - **Status:** **Partially Compliant (Documented Limitation)**
 - The API processes are completely stateless: user sessions are not stored in memory, and no server affinity is required.
-- **Media Storage Limitation:** Uploaded hotel images are currently saved to the server's local filesystem (`server/src/uploads/hotels`). Cloud platforms like Render have ephemeral filesystems. In production, persistent storage disks (e.g., Render Disks) or cloud object storage (Amazon S3 / Google Cloud Storage) must be configured for durability across container restarts.
+- **Rate Limiting In-Memory Store:** The current rate limiter uses an in-memory process store. For horizontal scaling across multiple instances, a shared store (e.g. Redis) is required.
+- **Media Storage Limitation:** Uploaded hotel images are currently saved to the server's local filesystem (`server/src/uploads/hotels`). Cloud platforms like Render have ephemeral filesystems. In production, persistent storage disks (e.g., Render Disks) or cloud object storage (Cloudflare R2 / Neon Object Storage / Amazon S3) must be configured for durability across container restarts (Phase 5D).
 
 ## 7. Port Binding
 > *Export services via port binding.*
 - **Status:** **Fully Compliant**
-- The backend Express application self-binds directly to the TCP port specified in `process.env.PORT` (defaults to 5000), without requiring an external web server container (like Apache or Tomcat).
+- The backend Express application self-binds directly to the TCP port specified in `process.env.PORT` (defaults to 5000) and listens across all network interfaces on `HOST=0.0.0.0` for Render container compatibility, without requiring an external web server container (like Apache or Tomcat).
 
 ## 8. Concurrency
 > *Scale out via the process model.*

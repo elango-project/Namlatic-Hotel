@@ -32,6 +32,20 @@ Built entirely using Node.js's built-in `node:test` framework to avoid bloating 
    - Maps raw PostgreSQL server-side aggregation rows to numeric types and strings.
    - Handles empty database state safely (`0` count, `0.00` rates) without `NaN`.
    - Preserves exact decimal precision without IEEE 754 floating-point distortion.
+4. **`database.config.test.js` (35 tests - Phase 5B):**
+   - DATABASE_URL parsing: Credentials, host, port, database name, and query parameter handling.
+   - SSL/TLS configuration: `sslmode=require`, `sslmode=prefer`, `sslmode=disable`, rejectUnauthorized flag, and Neon Server Name Indication (SNI).
+   - Channel binding semantics: Validates `disable`, `prefer` (with SCRAM-SHA-256-PLUS), and strict rejection of unsupported `require`.
+   - Discrete environment fallback: Preserves local development compatibility (`DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, `DB_NAME`).
+   - Connection pool sizing and idle timeout configuration.
+5. **`hardening.config.test.js` (23 tests - Phase 5C):**
+   - Port & Host binding: Verifies default host `0.0.0.0` for Render, custom `HOST`, dynamic `PORT`, and safe logging.
+   - CORS Allowlist: Parses comma-separated origin URLs, defaults to local dev origins, and strictly rejects wildcard `*` in production.
+   - Reverse Proxy Trust: Configures `trust proxy: 1` by default in production; proves anti-spoofing by resolving client IP correctly when `X-Forwarded-For` contains multiple hops.
+   - Rate Limit Configuration: Parses write and general rate limit windows and maximum request thresholds.
+   - Rate Limit Headers & Payload: Verifies standard draft headers (`RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`) and consistent JSON error response structure on HTTP 429.
+   - Body Size Limits: Verifies default 10kb JSON body limit and handles payload truncation.
+   - Production Error Sanitization: Masks stack traces and internal errors to `"Internal server error"` when `NODE_ENV === 'production'`.
 
 ---
 
@@ -39,7 +53,7 @@ Built entirely using Node.js's built-in `node:test` framework to avoid bloating 
 
 Communicates over HTTP to an isolated Express test instance on port 5001 connected to live PostgreSQL 18.6:
 
-### Test Breakdown (43 tests):
+### Test Breakdown (52 tests):
 - **Part 1 (POST):** Valid creation with/without JPEG and PNG, validation errors, magic bytes spoofing, 5 MB limit, and upload file cleanup on failure.
 - **Part 2 (GET List):** Retrieval of collection, prefix search (`lower(title) LIKE lower($1) || '%'`), price range filters, pagination slices, and parameter validation.
 - **Part 3 (GET Detail):** Retrieval of existing record, 404 on nonexistent record, 400 on non-integer, zero, and negative IDs.
@@ -47,6 +61,14 @@ Communicates over HTTP to an isolated Express test instance on port 5001 connect
 - **Part 5 (DELETE):** Deletion of hotel with image (verifies physical file removed), deletion without image, 404 handling, and graceful tolerance when image is already missing from disk.
 - **Part 6 (GET /api/hotels/stats):** Verifies HTTP 200 aggregate structure, total properties exact database count match, and properties with images strictly reflecting non-null `image_path` records in PostgreSQL.
 - **Part 7 (Security & Storage Integrity):** Path traversal block verification, confirmation of zero orphaned files in `server/src/uploads/hotels`.
+- **Part 8 (Database Connectivity & Health Probes - Phase 5B):** Liveness probe (`GET /api/health`), readiness probe (`GET /api/ready`), and database connection pool verification.
+- **Part 9 (Hardening, Security Headers, CORS & Rate Limiting - Phase 5C):**
+  - Verifies Helmet security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Cross-Origin-Resource-Policy: cross-origin`, and Content Security Policy).
+  - Verifies CORS allowlist accepts requests from authorized origin (`http://localhost:5173`) with appropriate `Access-Control-Allow-Origin`.
+  - Verifies CORS rejects unauthorized origins with HTTP 403 Forbidden.
+  - Verifies CORS preflight `OPTIONS` requests respond with HTTP 204 and cached max age.
+  - Verifies JSON body size cap rejects payloads exceeding 10 KB with HTTP 413.
+  - Verifies health probes (`/api/health` and `/api/ready`) bypass rate limiting.
 
 ---
 
@@ -160,7 +182,7 @@ Built using **Vitest** + **React Testing Library** + **@testing-library/jest-dom
 
 ## 5. Running the Tests
 
-### Backend Tests (84 tests):
+### Backend Tests (152 tests):
 From the `server` directory:
 ```powershell
 # Run all backend tests (Unit tests + Integration tests)
@@ -184,10 +206,10 @@ npm run test:watch
 ```
 
 ### Total Test Suite Count:
-- **Backend Unit Tests:** 42 passed
-- **Backend Integration Tests:** 43 passed
+- **Backend Unit Tests:** 100 passed
+- **Backend Integration Tests:** 52 passed
 - **Frontend Unit Tests:** 102 passed
-- **Total Automated Tests:** **187 / 187 passed (100% pass rate)**
+- **Total Automated Tests:** **254 / 254 passed (100% pass rate)**
 
 ---
 

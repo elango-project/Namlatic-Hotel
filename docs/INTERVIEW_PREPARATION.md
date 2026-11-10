@@ -38,10 +38,10 @@ This guide prepares you to defend every engineering decision in the Namlatic Hot
 ---
 
 ### Q6: What is the difference between your unit tests and integration tests?
-> **Answer:** "Our **backend unit tests** (42 tests) test individual functions in complete isolation with zero external dependencies. They verify input validation rules (coordinates, prices, titles, pagination boundaries, 64-bit BIGINT ranges, strict non-trimmed whitespace rejection, safe vs unsafe integer enforcement), binary magic byte detection, path traversal blocks, and database error mapping. They execute in under 400 ms using Node.js's native `node:test` runner.
-> Our **backend integration tests** (43 tests) test the entire system end-to-end: they launch an Express test server on an isolated port, issue HTTP fetch requests with multipart form data, write and delete files on disk, and execute live queries against PostgreSQL 18.6, asserting both database state and disk storage integrity.
+> **Answer:** "Our **backend unit tests** (100 tests) test individual functions in complete isolation with zero external dependencies. They verify input validation rules (coordinates, prices, titles, pagination boundaries, 64-bit BIGINT ranges, strict non-trimmed whitespace rejection, safe vs unsafe integer enforcement), binary magic byte detection, path traversal blocks, database error mapping, DATABASE_URL parsing and TLS/channel-binding policies (Phase 5B), dynamic port binding, CORS allowlist logic, reverse proxy anti-spoofing IP extraction, and rate limit header formatting (Phase 5C). They execute in ~700 ms using Node.js's native `node:test` runner.
+> Our **backend integration tests** (52 tests) test the entire system end-to-end: they launch an Express test server on an isolated port, issue HTTP fetch requests with multipart form data, write and delete files on disk, execute live queries against PostgreSQL 18.6, assert both database state and disk storage integrity, test health/ready probes, and verify Helmet security headers, CORS origin enforcement, body size caps, and probe rate limiter exemptions.
 > Our **frontend unit tests** (102 tests) run with Vitest and React Testing Library, testing UI components, form validation rules, image lifecycle cleanup, dynamic Leaflet map-center synchronization with primitive dependencies, route BIGINT safety without trimming, Redux slices, and mock API flows with 100% reliability.
-> Across the entire application, **187 automated tests** pass with a 100% pass rate."
+> Across the entire application, **254 automated tests** pass with a 100% pass rate."
 
 ---
 
@@ -55,7 +55,9 @@ This guide prepares you to defend every engineering decision in the Namlatic Hot
 ---
 
 ### Q8: What are the current production limitations of this project, and how would you address them?
-> **Answer:** "The primary limitation is media persistence. Currently, images are saved to the server's local filesystem. On cloud platforms like Render or AWS ECS with ephemeral containers, local files are wiped upon re-deployment. In a production environment, I would decouple file storage by streaming uploads directly to Amazon S3 or Google Cloud Storage using pre-signed URLs, storing only the CDN URLs in PostgreSQL. Second, I would add image re-encoding via `sharp` to strip malicious EXIF metadata and optimize image compression."
+> **Answer:** "Two distinct production limitations remain:
+> 1. **Durable Media Persistence (Phase 5D):** Currently, images are saved to the server's local filesystem. On cloud platforms like Render or AWS ECS with ephemeral containers, local files are wiped upon re-deployment. In Phase 5D, file storage will be decoupled by streaming uploads directly to durable object storage (e.g., Cloudflare R2, Neon Object Storage, or AWS S3), storing only immutable CDN URLs in PostgreSQL. Second, we will add image re-encoding via `sharp` to strip malicious EXIF metadata and optimize image compression.
+> 2. **Owner Authentication & Authorization (Phase 5F):** Currently, the portal implements strict defense-in-depth validation and IP-based rate limiting (Phase 5C), but lacks user identity sessions. Any client within their rate limit quota can create, modify, or delete hotel records. Robust authentication (JWT / session cookies / OAuth) and role-based property ownership must be enforced before public production exposure."
 
 ---
 
@@ -163,3 +165,54 @@ This guide prepares you to defend every engineering decision in the Namlatic Hot
 > - If an application parses large BIGINT primary keys with `Number(id)` or `parseInt(id, 10)`, values beyond $2^{53}-1$ lose precision (e.g., `9007199254740993` rounds to `9007199254740992`). This can cause destructive data collisions or fetching the wrong record.
 > - Furthermore, `Number.isSafeInteger(id)` incorrectly rejects legitimate PostgreSQL BIGINT IDs between $2^{53}$ and $2^{63}-1$.
 > - To solve this, we validate IDs as digit strings (`/^\d+$/`) and check the boundary using native ES2020 `BigInt` ($1\text{n} \le \text{id} \le 9223372036854775807\text{n}$) without floating-point conversion. Across network boundaries (REST URLs and JSON bodies), IDs are transmitted and maintained strictly as strings, ensuring exact 64-bit integer preservation end-to-end."
+
+---
+
+### Q21: Why must a Node.js web service on Render bind explicitly to `0.0.0.0` instead of `localhost` or `127.0.0.1`?
+> **Answer:** "In cloud containerized environments like Render, applications execute inside isolated Linux container namespaces.
+> - If an application invokes `app.listen(PORT, '127.0.0.1')` (or defaults to localhost), it binds exclusively to the loopback network interface. Only processes inside that exact container can reach the server.
+> - Render’s edge reverse proxy routes external public traffic into the container via an internal virtual Ethernet adapter (`eth0`). If the web service is not listening on `0.0.0.0` (all IPv4 network interfaces), the reverse proxy cannot establish a TCP connection, resulting in deployment timeouts and `502 Bad Gateway` errors.
+> - In our server startup (`server/src/server.js`), we explicitly pass `HOST` (`0.0.0.0` by default) to `app.listen(PORT, HOST, ...)`, ensuring immediate compatibility with Render and other container orchestrators."
+
+---
+
+### Q22: Why is `app.set('trust proxy', true)` dangerous, and why did you configure `trust proxy: 1` instead?
+> **Answer:** "When Express sits behind a reverse proxy (like Render, AWS ALB, or Cloudflare), the client's IP is forwarded in the `X-Forwarded-For` HTTP header (e.g. `X-Forwarded-For: <client>, <proxy1>`).
+> - If you blindly set `app.set('trust proxy', true)`, Express considers every proxy in the chain trustworthy and takes the leftmost IP as `req.ip`.
+> - **The Spoofing Attack:** An attacker can send a custom header: `X-Forwarded-For: 1.2.3.4`. When this reaches Render's proxy, Render appends the attacker's actual IP: `X-Forwarded-For: 1.2.3.4, <actual-ip>`. If `trust proxy: true` is enabled, Express treats `1.2.3.4` as the client IP! By rotating spoofed IPs on each request, an attacker completely bypasses IP-based rate limiters and IP reputation firewalls.
+> - **The Solution (`trust proxy: 1`):** In Render's assumed single-hop topology, there is exactly one reverse proxy hop between the internet and the container. Configuring `app.set('trust proxy', 1)` tells Express to trust only the immediate upstream proxy and ignore any client-supplied preamble, resolving the genuine remote address as `req.ip` and preventing rate limiter bypasses.
+> - **Post-Deployment Verification:** Because `trust proxy: 1` relies on an architectural assumption of Render's proxy topology, actual IP derivation must be verified post-deployment via `req.ip`. A temporary diagnostic endpoint can be used for verification and must be removed immediately after testing. Under no circumstances should the team fall back to unrestricted `trust proxy: true`."
+
+---
+
+### Q23: Why did you configure Helmet with `Cross-Origin-Resource-Policy: cross-origin` instead of its default `same-origin`?
+> **Answer:** "By default, Helmet enables `Cross-Origin-Resource-Policy: same-origin` (CORP). This defensive browser standard instructs the browser to block cross-origin reads of static assets (images, stylesheets, fonts) loaded via `<img>`, `<video>`, or `<script>` tags.
+> - In our target production architecture, the frontend SPA is deployed to Vercel (e.g., `https://namlatic-hotel.vercel.app`) while the Express backend runs on Render (e.g., `https://namlatic-api.onrender.com`).
+> - If `Cross-Origin-Resource-Policy: same-origin` remained active, the React application on Vercel would receive `CORP` blocking errors whenever trying to render uploaded hotel photos (`<img src="https://namlatic-api.onrender.com/uploads/hotels/..." />`).
+> - By explicitly setting `helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } })`, browsers are granted permission to display hotel media across distinct subdomains and platforms while maintaining all other security headers (nosniff, frameguard, CSP, strict referrer policy)."
+
+---
+
+### Q24: Does configuring Helmet and Content Security Policy (CSP) on Express protect the React frontend application?
+> **Answer:** "No. This is a critical architectural distinction:
+> 1. **Backend Response Scope:** Helmet headers emitted by the Express server protect only HTTP responses originating from the backend (API JSON data and uploaded static assets).
+> 2. **Decoupled Frontend Hosting:** The React Single Page Application (HTML, JS bundles, CSS) is served from Vercel's edge network, not Express. Browsers enforce CSP and security policies based on the headers attached to the initial HTML document request (`index.html`).
+> 3. **HSTS Scope:** HTTP Strict Transport Security enabled on the Render API domain (`api.namlatic...`) applies solely to API requests and does not protect the Vercel frontend domain (`portal.namlatic...`).
+> 4. **Phase 5E Requirement:** Dedicated frontend Content Security Policy, HSTS, frame protection, and referrer headers must be independently configured at the Vercel hosting layer (via `vercel.json` or edge middleware) in Phase 5E."
+
+---
+
+### Q25: How does your rate limiting strategy protect mutating endpoints, and why is rate limiting NOT a replacement for authentication?
+> **Answer:** "We configured a two-tier defense with `express-rate-limit`:
+> 1. **Mutating Route Limiter (`writeLimiter`):** Restricts `POST`, `PUT`, and `DELETE /api/hotels` to 60 requests per 15-minute window per IP.
+> 2. **Early Middleware Placement:** Crucially, `writeLimiter` is mounted in `hotel.routes.js` *before* `uploadHotelImage` (Multer). Rate-limited requests are terminated with HTTP 429 before the server reads multipart streams or writes tentative files to disk, neutralizing disk-fill and CPU exhaustion attacks.
+> 3. **Rate Limiting vs Authentication:** Rate limiting simply caps request frequency from an IP address; it provides **zero identity assurance**. It does not prove that the caller owns the hotel property or has permission to update or delete it. Any client within their rate quota could modify data. Rate limiting is a volumetric Denial-of-Service defense, whereas authentication (JWT/sessions) and authorization (RBAC) establish identity and property tenancy."
+
+---
+
+### Q26: Why do automated health and readiness probes (`/api/health`, `/api/ready`) need to be explicitly exempted from rate limiting?
+> **Answer:** "Cloud platforms like Render, Kubernetes, and AWS ECS perform continuous container health checks (often every 5–15 seconds) to detect stalled event loops or broken database connections.
+> - All health check probes from the internal load balancer share either the same proxy IP or loopback address.
+> - If health endpoints were subject to general rate limiting (e.g., 300 requests per 15 minutes), continuous automated polling would trigger HTTP 429 within 30–60 minutes.
+> - The cloud orchestrator would interpret HTTP 429 as service failure, restart the healthy container, enter a crash loop, and cause production downtime.
+> - We implement `skip: (req) => req.path === '/health' || req.path === '/ready'` on `generalLimiter`, ensuring infrastructure probes remain uninhibited while user-facing APIs remain protected."
