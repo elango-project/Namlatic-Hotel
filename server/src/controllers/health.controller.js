@@ -22,6 +22,11 @@ const sanitizeDbError = (err) => {
       return 'Database authentication failed (invalid credentials)';
     case '3D000':
       return 'Configured database does not exist';
+    case 'SELF_SIGNED_CERT_IN_CHAIN':
+    case 'UNABLE_TO_VERIFY_LEAF_SIGNATURE':
+    case 'CERT_HAS_EXPIRED':
+    case 'ERR_TLS_CERT_ALTNAME_INVALID':
+      return 'Database TLS/SSL certificate verification failed';
     default:
       return err.code
         ? `Database error (${err.code})`
@@ -78,4 +83,5 @@ const getReadiness = async (_req, res) => {
 module.exports = {
   getHealth,
   getReadiness,
+  sanitizeDbError,
 };

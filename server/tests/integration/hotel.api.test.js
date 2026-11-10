@@ -949,6 +949,76 @@ async function runIntegrationTests() {
         `Newly created files: ${JSON.stringify(newlyCreatedFiles)}`
       );
     }
+
+    // -------------------------------------------------------------
+    // PART 8: INFRASTRUCTURE, HEALTH & READINESS PROBES (PHASE 5B)
+    // -------------------------------------------------------------
+    console.log('\n--- PART 8: Infrastructure, Health & Readiness Probes (Phase 5B) ---');
+
+    // Test 44: GET /api/health - Liveness probe returns 200 with uptime and status: 'ok'
+    {
+      const res = await fetch(`http://localhost:${PORT}/api/health`);
+      const body = await res.json().catch(() => null);
+
+      assert(
+        'HEALTH: GET /api/health returns HTTP 200 with liveness metadata',
+        res.status === 200 &&
+          body?.status === 'ok' &&
+          typeof body?.uptime === 'string' &&
+          typeof body?.timestamp === 'string',
+        `status=${res.status}, body=${JSON.stringify(body)}`
+      );
+    }
+
+    // Test 45: GET /api/ready - Readiness probe returns 200 when database connected
+    {
+      const res = await fetch(`http://localhost:${PORT}/api/ready`);
+      const body = await res.json().catch(() => null);
+
+      assert(
+        'READINESS: GET /api/ready returns HTTP 200 when PostgreSQL is connected',
+        res.status === 200 &&
+          body?.status === 'ready' &&
+          body?.database?.connected === true &&
+          Boolean(body?.database?.serverTime),
+        `status=${res.status}, body=${JSON.stringify(body)}`
+      );
+    }
+
+    // Test 46: GET /api/ready - Database outage returns HTTP 503 with sanitized error while /health remains 200
+    {
+      const originalQuery = pool.query;
+      pool.query = async (text, params) => {
+        if (typeof text === 'string' && text.includes('NOW()')) {
+          const outageErr = new Error('Connection terminated unexpectedly');
+          outageErr.code = 'ECONNREFUSED';
+          throw outageErr;
+        }
+        return originalQuery.apply(pool, [text, params]);
+      };
+
+      try {
+        const readyRes = await fetch(`http://localhost:${PORT}/api/ready`);
+        const readyBody = await readyRes.json().catch(() => null);
+
+        const healthRes = await fetch(`http://localhost:${PORT}/api/health`);
+        const healthBody = await healthRes.json().catch(() => null);
+
+        assert(
+          'READINESS: Outage returns HTTP 503 with sanitized error, liveness stays 200',
+          readyRes.status === 503 &&
+            readyBody?.status === 'unhealthy' &&
+            readyBody?.database?.connected === false &&
+            typeof readyBody?.database?.error === 'string' &&
+            !readyBody.database.error.includes('stack') &&
+            healthRes.status === 200 &&
+            healthBody?.status === 'ok',
+          `readyStatus=${readyRes.status}, healthStatus=${healthRes.status}`
+        );
+      } finally {
+        pool.query = originalQuery;
+      }
+    }
   } finally {
     // Clean up created test hotels from database
     if (createdHotelIds.length > 0) {

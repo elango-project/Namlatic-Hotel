@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test:unit": "node --test tests/unit/hotel.validator.test.js tests/unit/security.test.js tests/unit/stats.test.js",
+    "test:unit": "node --test tests/unit/database.config.test.js tests/unit/hotel.validator.test.js tests/unit/security.test.js tests/unit/stats.test.js",
     "test:integration": "node tests/integration/hotel.api.test.js",
     "test": "npm run test:unit && npm run test:integration"
   },

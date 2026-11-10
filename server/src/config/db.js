@@ -1,13 +1,7 @@
 const { Pool } = require('pg');
 const env = require('./env');
 
-const pool = new Pool({
-  host: env.db.host,
-  port: env.db.port,
-  database: env.db.database,
-  user: env.db.user,
-  password: env.db.password,
-});
+const pool = new Pool(env.dbPoolConfig);
 
 // Log connection events in development
 pool.on('connect', () => {
@@ -16,13 +10,14 @@ pool.on('connect', () => {
   }
 });
 
+// Prevent idle client errors from crashing the Node.js process (vital for serverless DB compute sleep)
 pool.on('error', (err) => {
   console.error('[DB] Unexpected error on idle client:', err.message);
 });
 
 /**
  * Execute a parameterized SQL query.
- * @param {string} text  - SQL statement with $1, $2… placeholders
+ * @param {string} text   - SQL statement with $1, $2… placeholders
  * @param {any[]}  params - Bind values
  * @returns {Promise<import('pg').QueryResult>}
  */
