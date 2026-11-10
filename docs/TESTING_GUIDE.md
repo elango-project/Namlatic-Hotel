@@ -56,14 +56,28 @@ Built entirely using Node.js's built-in `node:test` framework to avoid bloating 
    - Public URL resolution: Verifies `r2:hotels/<uuid>.<ext>` references resolve dynamically to `https://${R2_PUBLIC_BASE_URL}/hotels/<uuid>.<ext>`.
    - Reference deletion: Verifies `DeleteObjectCommand` strips `r2:` prefix and handles nonexistent objects gracefully without throwing.
    - Local adapter regression: Verifies legacy `/uploads/hotels/<filename>` resolution, directory traversal protection (`..`), protected file guards (`.gitkeep`), and safe ENOENT tolerance.
-7. **`password.service.test.js` (25 tests - Phase 5F-A2.1):**
+7. **`password.service.test.js` (30 tests - Phase 5F-A2.1 & 5F-A2.1.1):**
    - Email normalization & validation: Leading/trailing whitespace and uppercase conversion (`"  Owner@Namlatic.COM  "` -> `"owner@namlatic.com"`), rejection of invalid formats, empty/whitespace strings, non-string types, and strings > 255 chars.
    - Unicode code-point password validation: Minimum 12 Unicode code points (`Array.from(p).length >= 12`), acceptance of 12 multi-byte emojis (48 UTF-8 bytes, 24 UTF-16 code units), rejection of 11 emojis despite having 22 UTF-16 code units.
    - UTF-8 byte boundary: Acceptance of 128 UTF-8 bytes (`Buffer.byteLength(p, 'utf8') <= 128`), rejection of 129 bytes.
+   - Password verification byte bounding: Candidate passwords of exactly 128 bytes reach verification; candidate passwords exceeding 128 bytes return `false` *before* entering the concurrency semaphore without consuming semaphore slots.
    - Password immutability: Strict preservation of leading, trailing, and internal spaces without trimming; preservation of raw decomposed/combining Unicode characters without normalization or casing mutation.
    - Argon2id cryptographic parameters: Verification of OWASP parameters (`memoryCost: 65536`, `timeCost: 3`, `parallelism: 1`, `hashLength: 32`), generation of unique salt hashes, verification of matching passwords, rejection of incorrect passwords, fast failure on invalid input, and safe handling of malformed hashes.
-   - Constant-time dummy hash: Availability of valid precomputed Argon2id hash for user-not-found timing protection.
-   - Bounded concurrency semaphore: Max 2 concurrent active tasks, queuing up to 5 tasks, immediate rejection (`HTTP 503 Retry-After: 3`) on queue overflow, 3000ms queue timeout with automatic queue cleanup, and active count recovery on task exceptions.
+   - Constant-time dummy hash: Precomputed Argon2id hash verified syntactically valid and returning `false` via `argon2.verify()` without throwing.
+   - Bounded concurrency semaphore: Max 2 concurrent active tasks, queuing up to 5 tasks, immediate rejection (`HTTP 503 Retry-After: 3`) on queue overflow, 3000ms queue timeout with automatic queue cleanup, active count recovery on task exceptions, and direct propagation of overload 503 errors during verification.
+8. **`terminalPrompt.test.js` (5 tests - Phase 5F-A2.1.1):**
+   - Character masking: Masks typed characters with asterisks (`*`) in real-time and returns unaltered password string on Enter.
+   - Backspace handling: Correctly erases terminal asterisk display (`\b \b`) and pops character from candidate password string.
+   - Unicode code point backspace: Accurately removes multibyte Unicode emojis code point by code point.
+   - Signal handling & cleanup: Restores terminal raw mode and rejects with `USER_CANCELLED` error code on Ctrl+C (`\u0003`).
+   - Non-TTY fallback: Falls back cleanly to line reading when input stream is not a TTY (supporting automated CI/CD and piped inputs).
+9. **`testDb.config.test.js` (10 tests - Phase 5F-A2.1.1):**
+   - Immediate rejection if `NODE_ENV === 'production'`.
+   - Rejection when `TEST_DATABASE_URL` is missing or whitespace only.
+   - Rejection of malformed URLs and non-PostgreSQL protocols (`mysql:`, `http:`).
+   - Rejection of URLs without target database name.
+   - Safety checks rejecting primary development database `namlatic_hotel`, PostgreSQL system database `postgres`, and databases without `test` substring.
+   - Successful validation and extraction of sanitized test database name.
 
 ---
 
@@ -102,13 +116,14 @@ Communicates over HTTP to an isolated Express test instance on port 5001 connect
   - Test 61: R2 deletion failure tolerance on hotel deletion (database deletion succeeds, logs orphan warning, returns HTTP 200 without rollback).
   - Test 62: Legacy local image reference compatibility (retrieval and updates correctly resolve and delete legacy `/uploads/hotels/...` references alongside R2).
   - Test 63: Database connection acquisition failure during update (compensating delete of newly uploaded R2 object when `db.pool.connect()` fails, safely bypassing rollback/release on unacquired client).
-- **Part 11 (Authentication Schema, Migrations & CLI Tools - Phase 5F-A2.1, 14 tests in `tests/integration/auth.database.test.js`):**
-  - Migration repeat-safety: Re-running `runMigrations()` is idempotent, succeeds without re-applying, and records migration versions in `schema_migrations`.
+- **Part 11 (Authentication Schema, Migrations & CLI Tools - Phase 5F-A2.1 & 5F-A2.1.1, 17 tests in `tests/integration/auth.database.test.js`):**
+  - Migration repeat-safety & concurrency: Re-running `runMigrations()` is idempotent, succeeds without re-applying, records migration versions in `schema_migrations`, detects concurrent lock `MIGRATION_ADVISORY_LOCK_ID = 987654322`, exits cleanly without running migrations (`locked: true`), and ensures lock release.
+  - Session Expiry Index Optimization (Migration 003): Verifies `idx_sessions_expires_at` and `idx_sessions_idle_expires_at` exist as separate single-column B-tree indexes, and confirms legacy composite index `idx_sessions_cleanup` does not exist.
   - Users schema: Columns (`id`, `email`, `password_hash`, `role`, `status`, `created_at`, `updated_at`), email uniqueness constraint (`23505`), partial unique index singleton (`idx_users_owner_singleton`), and email normalization check constraint (`chk_users_email_normalized`).
   - Sessions schema: Columns, token hash uniqueness constraint (`23505`), timestamp constraints (`chk_sessions_expires_after_created`), and foreign-key cascade (`ON DELETE CASCADE` removes user sessions upon user deletion).
   - One-time owner bootstrap CLI: Initial account creation, Argon2id verification of stored hash, non-overwriting behavior on subsequent runs, and race-condition safety under concurrent execution via advisory lock `pg_try_advisory_xact_lock`.
   - Administrative password recovery CLI: Updating owner password hash, revoking all active sessions atomically, and clean rejection when no owner exists.
-  - Data isolation: Zero modification or loss of existing hotel inventory records.
+  - Dedicated test database isolation & safe record tracking: Tests execute exclusively against `namlatic_hotel_test` via `getTestPool()`. All created test users are tracked by ID in `createdUserIds` and cleaned up strictly via `WHERE id = ANY($1::bigint[])`, eliminating destructive broad owner deletions (`DELETE FROM users WHERE role = 'owner'`). Zero modification or loss of existing hotel inventory records.
 
 ---
 
@@ -259,7 +274,7 @@ Built using **Vitest** + **React Testing Library** + **@testing-library/jest-dom
 
 ## 5. Running the Tests
 
-### Backend Tests (201 tests):
+### Backend Tests (263 tests):
 From the `server` directory:
 ```powershell
 # Run all backend tests (Unit tests + Integration tests)
@@ -268,7 +283,7 @@ npm test
 # Run only backend unit tests (lightning-fast Node native runner)
 npm run test:unit
 
-# Run only backend integration tests
+# Run only backend integration tests (requires TEST_DATABASE_URL)
 npm run test:integration
 ```
 
@@ -283,10 +298,10 @@ npm run test:watch
 ```
 
 ### Total Test Suite Count:
-- **Backend Unit Tests:** 138 passed
-- **Backend Integration Tests:** 63 passed
+- **Backend Unit Tests:** 183 passed
+- **Backend Integration Tests:** 80 passed (63 hotel API + 17 auth/migrations)
 - **Frontend Unit Tests:** 139 passed
-- **Total Automated Tests:** **340 / 340 passed (100% pass rate)**
+- **Total Automated Tests:** **402 / 402 passed (100% pass rate)**
 
 ---
 

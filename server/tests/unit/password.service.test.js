@@ -182,9 +182,99 @@ describe('Unit Tests: Authentication Validation & Password Service (Phase 5F-A2.
       assert.equal(nullMatch, false);
     });
 
-    it('provides a valid precomputed dummy hash for constant-time mitigation', () => {
+    it('verifies candidate password of exactly 128 UTF-8 bytes reaches verification', async () => {
+      const pwd128 = 'B'.repeat(128);
+      assert.equal(Buffer.byteLength(pwd128, 'utf8'), 128);
+      const hash = await hashPassword(pwd128);
+      const isMatch = await verifyPassword(hash, pwd128);
+      assert.equal(isMatch, true);
+    });
+
+    it('rejects candidate password exceeding 128 UTF-8 bytes returning false', async () => {
+      const pwd = 'ValidSecretPassphrase123!';
+      const hash = await hashPassword(pwd);
+      const pwd129 = 'C'.repeat(129);
+      assert.equal(Buffer.byteLength(pwd129, 'utf8'), 129);
+      const isMatch = await verifyPassword(hash, pwd129);
+      assert.equal(isMatch, false);
+    });
+
+    it('candidate password exceeding 128 bytes does not consume semaphore slot', async () => {
+      const pwd = 'ValidSecretPassphrase123!';
+      const hash = await hashPassword(pwd);
+      const pwd129 = 'D'.repeat(129);
+
+      let taskExecuted = false;
+      const trackingSemaphore = {
+        activeCount: 0,
+        run: async (fn) => {
+          taskExecuted = true;
+          return fn();
+        },
+      };
+
+      const isMatch = await verifyPassword(hash, pwd129, trackingSemaphore);
+      assert.equal(isMatch, false);
+      assert.equal(taskExecuted, false, 'Argon2 semaphore must not be entered for oversized candidate');
+      assert.equal(trackingSemaphore.activeCount, 0);
+    });
+
+    it('preserves original spaces and Unicode in candidate password during verification', async () => {
+      const rawPassword = '   cafe\u0301-secret-password-123   ';
+      const hash = await hashPassword(rawPassword);
+
+      // Exact match succeeds
+      const matchExact = await verifyPassword(hash, rawPassword);
+      assert.equal(matchExact, true);
+
+      // Trimmed candidate fails because spaces are preserved
+      const matchTrimmed = await verifyPassword(hash, rawPassword.trim());
+      assert.equal(matchTrimmed, false);
+
+      // NFC normalized candidate fails because original decomposed form was preserved
+      const nfcCandidate = rawPassword.normalize('NFC');
+      if (nfcCandidate !== rawPassword) {
+        const matchNormalized = await verifyPassword(hash, nfcCandidate);
+        assert.equal(matchNormalized, false);
+      }
+    });
+
+    it('propagates concurrency semaphore overload error (503) instead of swallowing it', async () => {
+      const pwd = 'ValidSecretPassphrase123!';
+      const hash = await hashPassword(pwd);
+
+      const sem = new ArgonSemaphore(1, 0, 1000); // 1 active, 0 queue slots
+      const blocker = () => new Promise((resolve) => setTimeout(resolve, 200));
+
+      // Saturate active slot
+      const p1 = sem.run(blocker);
+
+      // Calling verifyPassword while semaphore is saturated and queue is 0 must throw 503
+      await assert.rejects(
+        () => verifyPassword(hash, pwd, sem),
+        (err) => {
+          assert.equal(err.code, 'HASHING_OVERLOAD');
+          assert.equal(err.statusCode, 503);
+          assert.equal(err.retryAfter, 3);
+          return true;
+        }
+      );
+
+      await p1;
+    });
+
+    it('provides a valid precomputed dummy hash for constant-time mitigation', async () => {
+      const argon2 = require('argon2');
       assert.equal(typeof DUMMY_HASH, 'string');
       assert.equal(DUMMY_HASH.startsWith('$argon2id$v=19$m=65536,t=3,p=1$'), true);
+
+      // Verify dummy hash directly with argon2 to ensure valid salt, version, and parameters
+      const directMatch = await argon2.verify(DUMMY_HASH, 'ArbitraryCandidate123!');
+      assert.equal(directMatch, false);
+
+      // Verify dummy hash through verifyPassword helper
+      const serviceMatch = await verifyPassword(DUMMY_HASH, 'ArbitraryCandidate123!');
+      assert.equal(serviceMatch, false);
     });
   });
 

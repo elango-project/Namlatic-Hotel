@@ -427,3 +427,50 @@ This guide prepares you to defend every engineering decision in the Namlatic Hot
 >    CREATE UNIQUE INDEX idx_users_owner_singleton ON users (role) WHERE role = 'owner';
 >    ```
 >    Even across transaction isolation anomalies or manual SQL executions, PostgreSQL's index engine strictly prevents a second owner row from ever being inserted."
+
+---
+
+### Q40: Why is a dedicated test database (`TEST_DATABASE_URL`) required for integration tests, and how do we prevent test suites from destroying production or development owner records?
+> **Answer:** "During code review of initial authentication tests, a critical safety vulnerability was identified: tests executed against the primary database pool and ran `DELETE FROM users WHERE role = 'owner';`. If integration tests ever executed in an environment pointing to a real development or production database, the actual owner credentials would be permanently wiped.
+> 1. **Mandatory Dedicated Test Database:** We introduced `TEST_DATABASE_URL` and implemented `tests/helpers/testDb.js`. Integration tests strictly require `TEST_DATABASE_URL` pointing to an isolated, disposable database (e.g. `namlatic_hotel_test`).
+> 2. **Multi-Layered Safety Checks:** Before establishing a connection, `validateTestDatabaseConfig()` enforces four strict checks:
+>    - Rejects immediately if `NODE_ENV === 'production'`.
+>    - Rejects protected databases (`namlatic_hotel`, `postgres`, `production`, `neondb`).
+>    - Enforces that the database name must contain the substring `'test'`.
+>    - Logs only the sanitized database name, never exposing connection strings or credentials.
+> 3. **Non-Destructive Cleanup by Tracked IDs:** All broad deletions (`DELETE FROM users WHERE role = 'owner'`) were eliminated. The integration suite now tracks inserted test user IDs in memory (`createdUserIds`) and executes cleanup strictly by ID:
+>    ```sql
+>    DELETE FROM users WHERE id = ANY($1::bigint[]);
+>    ```
+>    This guarantees that even if a test suite runs, existing records outside the test run are completely untouched."
+
+---
+
+### Q41: Why did Migration 003 replace the composite index `(expires_at, idle_expires_at)` with separate single-column B-tree indexes?
+> **Answer:** "Session cleanup routines periodically sweep both expired sessions (exceeding 7-day absolute lifetime) and idle sessions (exceeding 2-hour rolling inactivity timeout):
+> ```sql
+> DELETE FROM sessions WHERE expires_at < NOW() OR idle_expires_at < NOW();
+> ```
+> 1. **The Flaw of Composite Indexes on Disjunctions (`OR`):** In a composite index `(expires_at, idle_expires_at)`, PostgreSQL orders rows by the first column (`expires_at`), and only orders by the second column within ties of the first. Because the cleanup query uses an `OR` condition, the query planner cannot use the second column of a composite index without scanning the entire table.
+> 2. **The Solution (Separate B-tree Indexes):** Migration `003_correct_session_expiry_indexes.sql` drops `idx_sessions_cleanup` and creates two separate indexes:
+>    - `idx_sessions_expires_at` ON `sessions (expires_at)`
+>    - `idx_sessions_idle_expires_at` ON `sessions (idle_expires_at)`
+> 3. **PostgreSQL BitmapOr Optimization:** With separate single-column indexes, PostgreSQL's cost-based optimizer can execute two lightning-fast index scans in parallel and combine their row pointers using a `BitmapOr` operation before visiting the heap table, maximizing query performance as the sessions table scales."
+
+---
+
+### Q42: How does `terminalPrompt.js` implement genuine masked input in Node.js TTY terminals without external dependencies, and how does it guarantee terminal restoration?
+> **Answer:** "Standard Node.js `readline` echoes typed characters directly to the terminal stdout. To prevent shoulder-surfing and avoid logging passwords:
+> 1. **Raw Mode (`setRawMode(true)`):** On TTY input streams, `promptMasked` disables canonical input buffering and terminal echo, receiving keystrokes byte-by-byte.
+> 2. **Visual Masking:** For each printable character typed, the script appends the raw character to an in-memory string and writes an asterisk (`*`) to stdout.
+> 3. **Unicode Code-Point Backspace:** When backspace (`\b` or `\x7f`) is pressed, the script erases the visual asterisk via `\b \b` (backspace, space, backspace) and pops a single Unicode code point from the password array (`Array.from(pwd).pop()`), accurately handling multi-byte characters and emojis.
+> 4. **Terminal State Restoration:** Entering raw mode mutates terminal state. If an unhandled error or Ctrl+C occurs without restoring normal mode, the user's terminal session would become corrupted. `promptMasked` wraps execution with a `cleanup()` handler listening to `SIGINT` (Ctrl+C `\u0003`), Enter, and errors, ensuring `setRawMode(false)` and `input.pause()` are executed on every possible exit path.
+> 5. **Non-TTY Fallback:** On non-interactive streams (such as CI/CD environments or piped stdin), it falls back cleanly to standard line-reading."
+
+---
+
+### Q43: How and why do we enforce the 128-byte password limit in `verifyPassword` before the Argon2 concurrency semaphore?
+> **Answer:** "While password creation enforces `Buffer.byteLength(password, 'utf8') <= 128` during validation, candidate passwords submitted to login verification endpoints come from untrusted external clients:
+> 1. **The Threat (Semaphore Denial-of-Service):** Argon2id is intentionally CPU- and memory-intensive (64 MiB RAM per hash). If an attacker submits requests with oversized 10 MB password payloads, processing them would waste CPU cycles. Even worse, entering our bounded concurrency semaphore (`maxActive: 2, maxQueue: 5`) with oversized payloads would saturate the queue and cause legitimate owner logins to fail with HTTP 503.
+> 2. **Pre-Semaphore Fast Failure:** `verifyPassword` checks `Buffer.byteLength(password, 'utf8') > 128` immediately upon entry. If exceeded, it returns `false` *before* calling `semaphore.run`.
+> 3. **Preserving Distinction Between Overload and False:** If `semaphore.run` fails due to genuine queue exhaustion (`code: 'HASHING_OVERLOAD'`), the error rejects to the caller so the API layer can return HTTP 503 with a `Retry-After: 3` header, whereas an invalid password simply returns `false`."

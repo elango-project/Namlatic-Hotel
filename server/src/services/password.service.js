@@ -1,6 +1,6 @@
 /**
  * Argon2id Password Hashing & Verification Service
- * Enforces centralized cryptographic configuration and concurrency bounds.
+ * Enforces centralized cryptographic configuration, byte limits, and concurrency bounds.
  */
 
 const argon2 = require('argon2');
@@ -33,7 +33,7 @@ const ARGON2_CONFIG = Object.freeze({
  * @throws {Error} If password fails validation or concurrency queue is full
  */
 async function hashPassword(password, semaphore = defaultArgonSemaphore) {
-  // 1. Strict pre-validation: validate before triggering CPU-intensive hashing
+  // 1. Strict pre-validation: validate code points and byte bounds before triggering CPU-intensive hashing
   validatePassword(password);
 
   // 2. Execute hash operation within bounded concurrency semaphore
@@ -43,12 +43,19 @@ async function hashPassword(password, semaphore = defaultArgonSemaphore) {
 }
 
 /**
- * Verifies a plaintext password against a stored Argon2id hash.
+ * Verifies a candidate password against a stored Argon2id hash.
+ *
+ * BOUNDARY SAFETY:
+ * - Rejects non-string and empty inputs.
+ * - Enforces the 128-byte maximum UTF-8 size BEFORE entering the concurrency semaphore.
+ * - Preserves original password bytes exactly (never trimmed or normalized).
+ * - Concurrency semaphore overload errors (HTTP 503) propagate to caller.
  *
  * @param {string} hash - Stored Argon2id hash string
  * @param {string} password - Candidate password
  * @param {import('../utils/argonSemaphore').ArgonSemaphore} [semaphore] - Concurrency controller
  * @returns {Promise<boolean>} True if password matches hash, false otherwise
+ * @throws {Error} If the concurrency semaphore is overloaded or times out
  */
 async function verifyPassword(hash, password, semaphore = defaultArgonSemaphore) {
   if (typeof hash !== 'string' || typeof password !== 'string') {
@@ -57,6 +64,11 @@ async function verifyPassword(hash, password, semaphore = defaultArgonSemaphore)
 
   // Reject empty inputs safely
   if (!hash.startsWith('$argon2') || password.length === 0) {
+    return false;
+  }
+
+  // Enforce the 128-byte maximum before entering the concurrency queue to prevent DoS
+  if (Buffer.byteLength(password, 'utf8') > 128) {
     return false;
   }
 

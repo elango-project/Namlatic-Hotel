@@ -3,7 +3,7 @@
  *
  * Password Recovery workflow:
  * 1. CLI only — no public HTTP endpoint.
- * 2. Reads new password via NEW_OWNER_PASSWORD environment variable or masked interactive prompt.
+ * 2. Reads new password via NEW_OWNER_PASSWORD environment variable or genuine masked interactive prompt.
  * 3. Validates password length and UTF-8 byte bounds without trimming or mutating.
  * 4. Precomputes Argon2id hash BEFORE opening database transaction.
  * 5. Requires an existing owner account (errors out if none exists).
@@ -11,53 +11,11 @@
  * 7. Never echoes password or hash to logs.
  */
 
-const readline = require('readline');
 const { pool } = require('../config/db');
 const { validatePassword } = require('../validators/auth.validator');
 const { hashPassword } = require('../services/password.service');
+const { promptMasked } = require('../utils/terminalPrompt');
 const { BOOTSTRAP_ADVISORY_LOCK_ID } = require('./bootstrap-owner');
-
-/**
- * Prompts user for a masked input line in interactive TTY terminals.
- *
- * @param {string} promptText
- * @returns {Promise<string>}
- */
-function promptMasked(promptText) {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true,
-    });
-
-    process.stdout.write(promptText);
-
-    let input = '';
-    const onData = (char) => {
-      char = char.toString('utf8');
-      switch (char) {
-        case '\n':
-        case '\r':
-        case '\u0004':
-          process.stdin.removeListener('data', onData);
-          break;
-        default:
-          process.stdout.write('*');
-          input += char;
-          break;
-      }
-    };
-
-    process.stdin.on('data', onData);
-
-    rl.question('', () => {
-      rl.close();
-      console.log('');
-      resolve(input);
-    });
-  });
-}
 
 /**
  * Core password reset logic.
@@ -65,10 +23,13 @@ function promptMasked(promptText) {
  * @param {object} [opts]
  * @param {string} [opts.newPassword]
  * @param {import('pg').PoolClient} [opts.customClient]
+ * @param {import('pg').Pool} [opts.pool]
+ * @param {object} [extraOpts]
  * @returns {Promise<{ status: string, reset: boolean, email?: string, revokedCount?: number }>}
  */
-async function resetOwnerPassword(opts = {}) {
-  let rawPassword = opts.newPassword || process.env.NEW_OWNER_PASSWORD;
+async function resetOwnerPassword(opts = {}, extraOpts = {}) {
+  const mergedOpts = typeof opts === 'object' && opts !== null ? { ...opts, ...extraOpts } : { ...extraOpts };
+  let rawPassword = mergedOpts.newPassword || process.env.NEW_OWNER_PASSWORD;
 
   if (!rawPassword && process.stdin.isTTY) {
     rawPassword = await promptMasked('Enter new owner password (min 12 Unicode chars): ');
@@ -86,8 +47,9 @@ async function resetOwnerPassword(opts = {}) {
   const newHash = await hashPassword(rawPassword);
 
   // 3. Acquire database client
-  const client = opts.customClient || (await pool.connect());
-  const shouldRelease = !opts.customClient;
+  const activePool = mergedOpts.pool || pool;
+  const client = mergedOpts.customClient || (await activePool.connect());
+  const shouldRelease = !mergedOpts.customClient;
 
   try {
     // 4. Begin transaction

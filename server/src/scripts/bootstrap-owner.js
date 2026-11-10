@@ -1,9 +1,9 @@
 /**
  * One-Time Owner Account Bootstrap CLI
  *
- * Provisoning workflow:
+ * Provisioning workflow:
  * 1. Read credentials via environment variables (OWNER_EMAIL, OWNER_PASSWORD)
- *    or prompt interactively if running in a TTY terminal.
+ *    or prompt interactively with genuine masked TTY input.
  * 2. Validate email and password without trimming or mutating password.
  * 3. Precompute Argon2id hash BEFORE opening database connection or transaction.
  * 4. Acquire single client from connection pool.
@@ -15,74 +15,12 @@
  * 10. Insert owner with precomputed hash, COMMIT, release client.
  */
 
-const readline = require('readline');
 const { pool } = require('../config/db');
 const { validateEmail, validatePassword } = require('../validators/auth.validator');
 const { hashPassword } = require('../services/password.service');
+const { promptMasked, promptText } = require('../utils/terminalPrompt');
 
 const BOOTSTRAP_ADVISORY_LOCK_ID = 987654321;
-
-/**
- * Prompts user for a masked input line in interactive TTY terminals.
- *
- * @param {string} promptText
- * @returns {Promise<string>}
- */
-function promptMasked(promptText) {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true,
-    });
-
-    process.stdout.write(promptText);
-
-    let input = '';
-    const onData = (char) => {
-      char = char.toString('utf8');
-      switch (char) {
-        case '\n':
-        case '\r':
-        case '\u0004':
-          process.stdin.removeListener('data', onData);
-          break;
-        default:
-          process.stdout.write('*');
-          input += char;
-          break;
-      }
-    };
-
-    process.stdin.on('data', onData);
-
-    rl.question('', () => {
-      rl.close();
-      console.log(''); // newline after enter
-      resolve(input);
-    });
-  });
-}
-
-/**
- * Prompts user for plain text in interactive TTY terminals.
- *
- * @param {string} promptText
- * @returns {Promise<string>}
- */
-function promptText(promptText) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  return new Promise((resolve) => {
-    rl.question(promptText, (ans) => {
-      rl.close();
-      resolve(ans);
-    });
-  });
-}
 
 /**
  * Core bootstrap logic.
@@ -91,11 +29,14 @@ function promptText(promptText) {
  * @param {string} [opts.email]
  * @param {string} [opts.password]
  * @param {import('pg').PoolClient} [opts.customClient]
+ * @param {import('pg').Pool} [opts.pool]
+ * @param {object} [extraOpts]
  * @returns {Promise<{ status: string, created: boolean, user?: object, message?: string }>}
  */
-async function bootstrapOwner(opts = {}) {
-  let rawEmail = opts.email || process.env.OWNER_EMAIL;
-  let rawPassword = opts.password || process.env.OWNER_PASSWORD;
+async function bootstrapOwner(opts = {}, extraOpts = {}) {
+  const mergedOpts = typeof opts === 'object' && opts !== null ? { ...opts, ...extraOpts } : { ...extraOpts };
+  let rawEmail = mergedOpts.email || process.env.OWNER_EMAIL;
+  let rawPassword = mergedOpts.password || process.env.OWNER_PASSWORD;
 
   // If in interactive terminal and credentials not in env, prompt interactively
   if (!rawEmail && process.stdin.isTTY) {
@@ -123,8 +64,9 @@ async function bootstrapOwner(opts = {}) {
   const passwordHash = await hashPassword(rawPassword);
 
   // 3. Acquire database client
-  const client = opts.customClient || (await pool.connect());
-  const shouldRelease = !opts.customClient;
+  const activePool = mergedOpts.pool || pool;
+  const client = mergedOpts.customClient || (await activePool.connect());
+  const shouldRelease = !mergedOpts.customClient;
 
   try {
     // 4. Begin transaction

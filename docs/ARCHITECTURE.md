@@ -745,7 +745,7 @@ Phase 5F-A2.1 establishes the database schema for owner credentials and PostgreS
    - **Indexing Strategy:**
      - `token_hash` has an automatic unique B-tree index created by its `UNIQUE` constraint; no duplicate index is created.
      - `idx_sessions_user_id`: Fast lookup for user-specific sessions and foreign key cascade maintenance.
-     - `idx_sessions_cleanup`: Composite index on `(expires_at, idle_expires_at)` enabling efficient background sweeping of dead sessions.
+     - `idx_sessions_expires_at` & `idx_sessions_idle_expires_at` (Migration 003): Separate single-column B-tree indexes on `expires_at` and `idle_expires_at`. Replacing the legacy composite index (`idx_sessions_cleanup`), separate indexes enable PostgreSQL's query planner to optimize session cleanup queries containing disjunctions (`WHERE expires_at < NOW() OR idle_expires_at < NOW()`) via BitmapOr index scans or independent range filters.
 
 ### 10.2 Argon2id Cryptographic Configuration
 Password hashing utilizes the reference `argon2` Node.js library configured to OWASP RFC 9106 standards:
@@ -767,19 +767,21 @@ Password hashing utilizes the reference `argon2` Node.js library configured to O
   ```javascript
   Buffer.byteLength(password, 'utf8') <= 128
   ```
-  This bounds memory and CPU consumption against malicious algorithmic complexity payloads.
+  This bounds memory and CPU consumption against malicious algorithmic complexity payloads. In `verifyPassword`, candidate passwords exceeding 128 UTF-8 bytes are rejected *before* entering the concurrency semaphore, preventing denial-of-service queue saturation.
 - **Password Immutability:** Passwords are **never** trimmed (`.trim()`), normalized (`.normalize()`), lowercased, or mutated in any form. Leading, trailing, and internal whitespace characters are preserved as valid entropy.
 
-### 10.4 Process-Local Bounded Concurrency Semaphore
+### 10.4 Process-Local Bounded Concurrency Semaphore & Constant-Time Dummy Hash
 Because Argon2id allocates 64 MiB of memory and consumes significant CPU per hash, uncontrolled concurrency could starve Node.js worker threads and block the event loop.
 - **Active Operations:** Maximum `2` concurrent active Argon2id operations.
 - **Queued Operations:** Maximum `5` waiting tasks.
 - **Queue Timeout:** `3,000 ms` maximum wait before failing fast with `code: 'HASHING_OVERLOAD'` (suitable for HTTP 503 `Retry-After: 3`).
 - **Process-Local Scope:** This concurrency limiter is process-local to the single container instance. Horizontal multi-replica deployments would coordinate via external queues or dedicated authentication services.
+- **Constant-Time Timing Equalization:** `password.service.js` exports a precomputed, syntactically valid `DUMMY_HASH` (`$argon2id$v=19$m=65536,t=3,p=1$...`). In Phase 5F-A2.2, when a login attempt references a nonexistent email, `verifyPassword(DUMMY_HASH, candidatePassword)` is executed so CPU timing is indistinguishable from valid accounts, defeating user enumeration attacks.
 
 ### 10.5 One-Time Owner Account Bootstrap (`bootstrap-owner.js`)
 - **Execution:** Invoked via `npm run db:bootstrap` (CLI only; no public HTTP route).
-- **Credentials:** Ingested via temporary environment variables (`OWNER_EMAIL`, `OWNER_PASSWORD`) or masked terminal input (`readline`). Passwords are never accepted as command-line arguments or logged.
+- **Credentials:** Ingested via temporary environment variables (`OWNER_EMAIL`, `OWNER_PASSWORD`) or genuine masked terminal input (`terminalPrompt.js`). Passwords are never accepted as command-line arguments or logged.
+- **Terminal Masking:** When running in an interactive TTY, `terminalPrompt.js` activates raw mode (`setRawMode(true)`), echoes asterisks (`*`) for typed characters, handles backspace (`\b \b`) accurately by popping Unicode code points, handles Enter, and safely restores raw mode on all exit paths (normal completion, Ctrl+C cancellation, or errors). Falls back gracefully to standard line reading on non-TTY streams (e.g. CI/CD pipelines).
 - **Transaction Safety & Advisory Locking:**
   1. Computes Argon2id hash **before** acquiring a database connection, preventing idle locks during CPU computation.
   2. Acquires connection and executes `BEGIN`.
@@ -792,7 +794,7 @@ Because Argon2id allocates 64 MiB of memory and consumes significant CPU per has
 ### 10.6 Administrative Password Recovery (`reset-owner-password.js`)
 - **Execution:** Invoked via `npm run db:reset-password` (CLI only).
 - **Procedure:**
-  1. Ingests new password via `NEW_OWNER_PASSWORD` or masked terminal input.
+  1. Ingests new password via `NEW_OWNER_PASSWORD` or masked terminal input (`terminalPrompt.js`).
   2. Precomputes Argon2id hash.
   3. Acquires transaction and advisory lock.
   4. Verifies existing owner account (errors out if none exists).
@@ -803,7 +805,23 @@ Because Argon2id allocates 64 MiB of memory and consumes significant CPU per has
      ```
   7. Commits transaction and releases connection.
 
-### 10.7 Status & Scope Boundaries
-Phase 5F-A2.1 implements the credential, database, and CLI infrastructure only.
+### 10.7 Migration Concurrency Protection (`migrate.js`)
+To guard against race conditions and lock contention in automated deployment pipelines or multiple server start events:
+- **Session Advisory Lock:** `migrate.js` acquires a session-level advisory lock (`MIGRATION_ADVISORY_LOCK_ID = 987654322`) on a pinned PostgreSQL client before reading or applying migrations.
+- **Clean Skipping:** If another deployment or runner holds the lock (`pg_try_advisory_lock` returns `false`), the runner logs an informational notice and exits cleanly (`{ applied: [], skipped: [], locked: true }`) without throwing or executing duplicate migrations.
+- **Guaranteed Lock Release:** The advisory lock is unlocked within a `finally` block on the pinned client, ensuring release even if a migration script throws an exception.
+
+### 10.8 Dedicated Test Database Isolation & Safety Safeguards (Phase 5F-A2.1.1)
+To eliminate data destruction risks discovered during the Phase 5F-A2.1 review, integration tests require a dedicated, isolated test database (`namlatic_hotel_test`):
+- **Mandatory `TEST_DATABASE_URL`:** Integration test runs fail immediately if `TEST_DATABASE_URL` is omitted. Tests never fall back to the development `DATABASE_URL`.
+- **Runtime Safety Enforcements (`testDb.js`):**
+  1. Rejects execution when `NODE_ENV === 'production'`.
+  2. Rejects protected databases (`namlatic_hotel`, `postgres`, `production`, `neondb`).
+  3. Enforces that the database name must contain the substring `'test'`.
+  4. Sanitized logging outputs only the database name, never connection strings or credentials.
+- **Non-Destructive Test Cleanup:** Broad deletion queries (such as `DELETE FROM users WHERE role = 'owner'`) are strictly eliminated. Instead, the test suite tracks all created test user IDs in memory (`createdUserIds`) and deletes only those temporary test records (`WHERE id = ANY($1::bigint[])`), completely eliminating the risk of erasing legitimate owner records.
+
+### 10.9 Status & Scope Boundaries
+Phase 5F-A2.1 and 5F-A2.1.1 implement the credential, database, testing isolation, and CLI infrastructure only.
 - HTTP login/logout endpoints, session cookie management (`__Host-namlatic_session`), CSRF middleware (`X-Requested-With`), timing-safe Vercel proxy-secret validation, and route protection for `/api/hotels/*` are scheduled for **Phase 5F-A2.2**.
 - The API write endpoints remain unauthenticated until Phase 5F-A2.2 is complete.

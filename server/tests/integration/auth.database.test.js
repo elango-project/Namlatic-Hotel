@@ -1,65 +1,129 @@
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
-const { pool } = require('../../src/config/db');
-const { runMigrations } = require('../../src/database/migrate');
+const { getTestPool, closeTestPool } = require('../helpers/testDb');
+const { setPool, resetPool } = require('../../src/config/db');
+const { runMigrations, MIGRATION_ADVISORY_LOCK_ID } = require('../../src/database/migrate');
 const { bootstrapOwner } = require('../../src/scripts/bootstrap-owner');
 const { resetOwnerPassword } = require('../../src/scripts/reset-owner-password');
 const { hashPassword, verifyPassword } = require('../../src/services/password.service');
 
-describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phase 5F-A2.1)', () => {
+describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phase 5F-A2.1.1)', () => {
+  let testPool;
   let initialHotelCount = 0;
   const createdUserIds = [];
 
   before(async () => {
-    // 1. Record baseline hotel count to ensure zero data loss or modification
-    const countRes = await pool.query('SELECT COUNT(*) FROM hotels;');
-    initialHotelCount = parseInt(countRes.rows[0].count, 10);
+    // 1. Acquire dedicated test database pool and redirect global pool proxy
+    testPool = getTestPool();
+    setPool(testPool);
 
-    // 2. Run migrations
-    await runMigrations();
+    // 2. Run migrations on test database
+    await runMigrations(testPool);
+
+    // 3. Record baseline hotel count to ensure zero data loss or modification
+    const countRes = await testPool.query('SELECT COUNT(*) FROM hotels;');
+    initialHotelCount = parseInt(countRes.rows[0].count, 10);
   });
 
   after(async () => {
-    // Clean up created test users and associated cascaded sessions
+    // Clean up created test users and associated cascaded sessions using tracked IDs only
     if (createdUserIds.length > 0) {
-      await pool.query('DELETE FROM users WHERE id = ANY($1::bigint[]);', [createdUserIds]);
+      await testPool.query('DELETE FROM users WHERE id = ANY($1::bigint[]);', [createdUserIds]);
     }
 
     // Verify hotel count remains identical to baseline
-    const finalCountRes = await pool.query('SELECT COUNT(*) FROM hotels;');
+    const finalCountRes = await testPool.query('SELECT COUNT(*) FROM hotels;');
     const finalHotelCount = parseInt(finalCountRes.rows[0].count, 10);
     assert.equal(finalHotelCount, initialHotelCount, 'Hotel rows must remain completely unaffected');
 
-    await pool.end();
+    resetPool();
+    await closeTestPool();
   });
 
   // ==========================================================================
-  // 1. Migration Repeat-Safety
+  // 1. Migration Runner Repeat-Safety, Concurrency & Advisory Locking
   // ==========================================================================
-  describe('Migration Runner Repeat-Safety', () => {
+  describe('Migration Runner Repeat-Safety & Advisory Locking', () => {
     it('executing runMigrations a second time succeeds with zero new migrations applied', async () => {
-      const secondRun = await runMigrations();
+      const secondRun = await runMigrations(testPool);
       assert.equal(secondRun.applied.length, 0, 'No migrations should be re-applied');
-      assert.equal(secondRun.skipped.length >= 2, true, 'At least 2 migrations should be skipped');
+      assert.equal(secondRun.skipped.length >= 3, true, 'At least 3 migrations should be skipped');
+      assert.equal(secondRun.locked, false);
     });
 
-    it('verifies that schema_migrations records the migration versions accurately', async () => {
-      const res = await pool.query(
+    it('verifies that schema_migrations records all migration versions accurately', async () => {
+      const res = await testPool.query(
         'SELECT version FROM schema_migrations ORDER BY version ASC;'
       );
       const versions = res.rows.map((r) => r.version);
       assert.equal(versions.includes('001_create_hotels_schema.sql'), true);
       assert.equal(versions.includes('002_create_auth_tables.sql'), true);
+      assert.equal(versions.includes('003_correct_session_expiry_indexes.sql'), true);
+    });
+
+    it('detects when advisory lock is held and exits cleanly without running migrations', async () => {
+      const client = await testPool.connect();
+      try {
+        // Explicitly acquire the advisory lock on a separate client
+        const lockRes = await client.query('SELECT pg_try_advisory_lock($1) AS acquired;', [MIGRATION_ADVISORY_LOCK_ID]);
+        assert.equal(lockRes.rows[0].acquired, true, 'Advisory lock must be acquired by holder client');
+
+        // Attempting to run migrations concurrently should gracefully report locked: true
+        const runResult = await runMigrations(testPool);
+        assert.equal(runResult.locked, true);
+        assert.equal(runResult.applied.length, 0);
+
+        // Unlock
+        await client.query('SELECT pg_advisory_unlock($1);', [MIGRATION_ADVISORY_LOCK_ID]);
+      } finally {
+        client.release();
+      }
+
+      // After release, runMigrations acquires lock normally
+      const postResult = await runMigrations(testPool);
+      assert.equal(postResult.locked, false);
     });
   });
 
   // ==========================================================================
-  // 2. Users Table Schema & Constraints
+  // 2. Session Expiry Index Verification (Migration 003)
+  // ==========================================================================
+  describe('Session Expiry Index Optimization (Migration 003)', () => {
+    it('verifies separate single-column B-tree indexes exist for expires_at and idle_expires_at', async () => {
+      const res = await testPool.query(`
+        SELECT indexname
+        FROM pg_indexes
+        WHERE tablename = 'sessions';
+      `);
+      const indexNames = res.rows.map((r) => r.indexname);
+
+      assert.equal(indexNames.includes('idx_sessions_expires_at'), true, 'idx_sessions_expires_at must exist');
+      assert.equal(indexNames.includes('idx_sessions_idle_expires_at'), true, 'idx_sessions_idle_expires_at must exist');
+    });
+
+    it('verifies legacy composite index idx_sessions_cleanup does not exist', async () => {
+      const res = await testPool.query(`
+        SELECT indexname
+        FROM pg_indexes
+        WHERE tablename = 'sessions';
+      `);
+      const indexNames = res.rows.map((r) => r.indexname);
+
+      assert.equal(
+        indexNames.includes('idx_sessions_cleanup'),
+        false,
+        'Legacy composite index idx_sessions_cleanup must have been dropped'
+      );
+    });
+  });
+
+  // ==========================================================================
+  // 3. Users Table Schema & Constraints
   // ==========================================================================
   describe('Users Table Schema & Constraints', () => {
     it('verifies users table columns and default values', async () => {
-      const res = await pool.query(`
+      const res = await testPool.query(`
         SELECT column_name, data_type, is_nullable, column_default
         FROM information_schema.columns
         WHERE table_name = 'users'
@@ -82,7 +146,7 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
       const uniqueEmail = `test-unique-${Date.now()}@namlatic.com`;
       const dummyHash = await hashPassword('TestOwnerPassword123!');
 
-      const res1 = await pool.query(
+      const res1 = await testPool.query(
         `INSERT INTO users (email, password_hash, role, status)
          VALUES ($1, $2, 'owner', 'active')
          RETURNING id;`,
@@ -93,7 +157,7 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
       // Attempt duplicate email insertion
       await assert.rejects(
         () =>
-          pool.query(
+          testPool.query(
             `INSERT INTO users (email, password_hash, role, status)
              VALUES ($1, $2, 'owner', 'active');`,
             [uniqueEmail, dummyHash]
@@ -105,7 +169,7 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
       );
 
       // Clean up this owner so subsequent owner constraint tests can test singleton
-      await pool.query('DELETE FROM users WHERE id = $1;', [res1.rows[0].id]);
+      await testPool.query('DELETE FROM users WHERE id = $1;', [res1.rows[0].id]);
       const idx = createdUserIds.indexOf(res1.rows[0].id);
       if (idx !== -1) createdUserIds.splice(idx, 1);
     });
@@ -115,7 +179,7 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
       const email2 = `owner2-${Date.now()}@namlatic.com`;
       const dummyHash = await hashPassword('ValidOwnerPassphrase2026!');
 
-      const res1 = await pool.query(
+      const res1 = await testPool.query(
         `INSERT INTO users (email, password_hash, role, status)
          VALUES ($1, $2, 'owner', 'active')
          RETURNING id;`,
@@ -126,7 +190,7 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
       // Second owner insert must fail due to idx_users_owner_singleton
       await assert.rejects(
         () =>
-          pool.query(
+          testPool.query(
             `INSERT INTO users (email, password_hash, role, status)
              VALUES ($1, $2, 'owner', 'active');`,
             [email2, dummyHash]
@@ -139,7 +203,7 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
       );
 
       // Clean up owner1
-      await pool.query('DELETE FROM users WHERE id = $1;', [res1.rows[0].id]);
+      await testPool.query('DELETE FROM users WHERE id = $1;', [res1.rows[0].id]);
       const idx = createdUserIds.indexOf(res1.rows[0].id);
       if (idx !== -1) createdUserIds.splice(idx, 1);
     });
@@ -150,7 +214,7 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
       // Un-lowercased email
       await assert.rejects(
         () =>
-          pool.query(
+          testPool.query(
             `INSERT INTO users (email, password_hash, role, status)
              VALUES ('UpperCASE@namlatic.com', $1, 'owner', 'active');`,
             [dummyHash]
@@ -161,7 +225,7 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
       // Email with leading/trailing spaces
       await assert.rejects(
         () =>
-          pool.query(
+          testPool.query(
             `INSERT INTO users (email, password_hash, role, status)
              VALUES ('  spaces@namlatic.com  ', $1, 'owner', 'active');`,
             [dummyHash]
@@ -172,14 +236,14 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
   });
 
   // ==========================================================================
-  // 3. Sessions Table Schema & Cascade Integrity
+  // 4. Sessions Table Schema & Cascade Integrity
   // ==========================================================================
   describe('Sessions Table Schema, Constraints & Cascades', () => {
     let testUserId;
 
     before(async () => {
       const dummyHash = await hashPassword('ValidOwnerPassphrase2026!');
-      const res = await pool.query(
+      const res = await testPool.query(
         `INSERT INTO users (email, password_hash, role, status)
          VALUES ($1, $2, 'owner', 'active')
          RETURNING id;`,
@@ -191,7 +255,7 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
 
     after(async () => {
       if (testUserId) {
-        await pool.query('DELETE FROM users WHERE id = $1;', [testUserId]);
+        await testPool.query('DELETE FROM users WHERE id = $1;', [testUserId]);
         const idx = createdUserIds.indexOf(testUserId);
         if (idx !== -1) createdUserIds.splice(idx, 1);
       }
@@ -203,7 +267,7 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
       const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
       const idleExpiresAt = new Date(now.getTime() + 2 * 60 * 60 * 1000);
 
-      await pool.query(
+      await testPool.query(
         `INSERT INTO sessions (user_id, token_hash, expires_at, idle_expires_at, ip_address, user_agent)
          VALUES ($1, $2, $3, $4, '127.0.0.1', 'Mozilla/5.0');`,
         [testUserId, tokenHash, expiresAt, idleExpiresAt]
@@ -212,7 +276,7 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
       // Duplicate token_hash insert
       await assert.rejects(
         () =>
-          pool.query(
+          testPool.query(
             `INSERT INTO sessions (user_id, token_hash, expires_at, idle_expires_at, ip_address, user_agent)
              VALUES ($1, $2, $3, $4, '127.0.0.1', 'Mozilla/5.0');`,
             [testUserId, tokenHash, expiresAt, idleExpiresAt]
@@ -227,7 +291,7 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
 
       await assert.rejects(
         () =>
-          pool.query(
+          testPool.query(
             `INSERT INTO sessions (user_id, token_hash, expires_at, idle_expires_at)
              VALUES ($1, $2, $3, NOW());`,
             [testUserId, tokenHash, past]
@@ -238,26 +302,20 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
 
     it('cascades deletion of user to all associated sessions (ON DELETE CASCADE)', async () => {
       const dummyHash = await hashPassword('ValidOwnerPassphrase2026!');
-      const tempUserRes = await pool.query(
-        `INSERT INTO users (email, password_hash, role, status)
-         VALUES ($1, $2, 'owner', 'active')
-         ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash
-         RETURNING id;`,
-        [`cascade-owner-${Date.now()}@namlatic.com`, dummyHash]
-      ).catch(async () => {
-        // If owner singleton exists, clean testUserId first
-        await pool.query('DELETE FROM users WHERE id = $1;', [testUserId]);
+      // Clean up previous testUserId first so we can insert new owner
+      if (testUserId) {
+        await testPool.query('DELETE FROM users WHERE id = $1;', [testUserId]);
         const idx = createdUserIds.indexOf(testUserId);
         if (idx !== -1) createdUserIds.splice(idx, 1);
         testUserId = null;
+      }
 
-        return pool.query(
-          `INSERT INTO users (email, password_hash, role, status)
-           VALUES ($1, $2, 'owner', 'active')
-           RETURNING id;`,
-          [`cascade-owner-${Date.now()}@namlatic.com`, dummyHash]
-        );
-      });
+      const tempUserRes = await testPool.query(
+        `INSERT INTO users (email, password_hash, role, status)
+         VALUES ($1, $2, 'owner', 'active')
+         RETURNING id;`,
+        [`cascade-owner-${Date.now()}@namlatic.com`, dummyHash]
+      );
 
       const tempId = tempUserRes.rows[0].id;
       createdUserIds.push(tempId);
@@ -267,82 +325,88 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
       const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
       const idleExpiresAt = new Date(now.getTime() + 2 * 60 * 60 * 1000);
 
-      await pool.query(
+      await testPool.query(
         `INSERT INTO sessions (user_id, token_hash, expires_at, idle_expires_at)
          VALUES ($1, $2, $3, $4);`,
         [tempId, tokenHash, expiresAt, idleExpiresAt]
       );
 
       // Check session exists
-      const beforeDel = await pool.query('SELECT COUNT(*) FROM sessions WHERE user_id = $1;', [tempId]);
+      const beforeDel = await testPool.query('SELECT COUNT(*) FROM sessions WHERE user_id = $1;', [tempId]);
       assert.equal(parseInt(beforeDel.rows[0].count, 10), 1);
 
-      // Delete user
-      await pool.query('DELETE FROM users WHERE id = $1;', [tempId]);
+      // Delete user specifically by ID
+      await testPool.query('DELETE FROM users WHERE id = $1;', [tempId]);
       const idx = createdUserIds.indexOf(tempId);
       if (idx !== -1) createdUserIds.splice(idx, 1);
 
       // Verify sessions automatically removed
-      const afterDel = await pool.query('SELECT COUNT(*) FROM sessions WHERE user_id = $1;', [tempId]);
+      const afterDel = await testPool.query('SELECT COUNT(*) FROM sessions WHERE user_id = $1;', [tempId]);
       assert.equal(parseInt(afterDel.rows[0].count, 10), 0);
     });
   });
 
   // ==========================================================================
-  // 4. One-Time Owner Bootstrap & Concurrency
+  // 5. One-Time Owner Bootstrap & Concurrency
   // ==========================================================================
   describe('One-Time Owner Bootstrap CLI & Concurrency', () => {
-    before(async () => {
-      // Ensure no owner exists before running bootstrap tests
-      await pool.query("DELETE FROM users WHERE role = 'owner';");
-    });
+    let bootstrappedOwnerId;
 
     it('successfully bootstraps an owner account and validates password hash', async () => {
       const email = `bootstrap-${Date.now()}@namlatic.com`;
       const password = 'BootstrapOwnerSecretPassword2026!';
 
-      const result = await bootstrapOwner({ email, password });
+      const result = await bootstrapOwner({ email, password, pool: testPool });
       assert.equal(result.status, 'created');
       assert.equal(result.created, true);
       assert.equal(result.user.email, email);
-      createdUserIds.push(result.user.id);
+      bootstrappedOwnerId = result.user.id;
+      createdUserIds.push(bootstrappedOwnerId);
 
       // Verify stored password hash
-      const dbCheck = await pool.query('SELECT password_hash FROM users WHERE id = $1;', [result.user.id]);
+      const dbCheck = await testPool.query('SELECT password_hash FROM users WHERE id = $1;', [bootstrappedOwnerId]);
       const storedHash = dbCheck.rows[0].password_hash;
       const isMatch = await verifyPassword(storedHash, password);
       assert.equal(isMatch, true, 'Stored password hash must verify against original password');
     });
 
     it('does not overwrite or alter an existing owner on subsequent bootstrap attempts', async () => {
-      const initialOwner = (await pool.query("SELECT id, email, password_hash FROM users WHERE role = 'owner' LIMIT 1;")).rows[0];
+      const initialOwner = (await testPool.query("SELECT id, email, password_hash FROM users WHERE role = 'owner' LIMIT 1;")).rows[0];
 
-      const secondRun = await bootstrapOwner({
-        email: 'attacker@evil.com',
-        password: 'AttackerNewPassword123!',
-      });
+      const secondRun = await bootstrapOwner(
+        {
+          email: 'attacker@evil.com',
+          password: 'AttackerNewPassword123!',
+          pool: testPool,
+        }
+      );
 
       assert.equal(secondRun.status, 'exists');
       assert.equal(secondRun.created, false);
 
-      const dbCheck = (await pool.query("SELECT id, email, password_hash FROM users WHERE role = 'owner' LIMIT 1;")).rows[0];
+      const dbCheck = (await testPool.query("SELECT id, email, password_hash FROM users WHERE role = 'owner' LIMIT 1;")).rows[0];
       assert.equal(dbCheck.id, initialOwner.id);
       assert.equal(dbCheck.email, initialOwner.email);
       assert.equal(dbCheck.password_hash, initialOwner.password_hash);
     });
 
     it('handles two concurrent bootstrap executions safely creating at most one owner', async () => {
-      // Clear owner
-      await pool.query("DELETE FROM users WHERE role = 'owner';");
+      // Safely delete only the bootstrapped test owner by ID
+      if (bootstrappedOwnerId) {
+        await testPool.query('DELETE FROM users WHERE id = $1;', [bootstrappedOwnerId]);
+        const idx = createdUserIds.indexOf(bootstrappedOwnerId);
+        if (idx !== -1) createdUserIds.splice(idx, 1);
+        bootstrappedOwnerId = null;
+      }
 
       const emailA = `concurrent-a-${Date.now()}@namlatic.com`;
       const emailB = `concurrent-b-${Date.now()}@namlatic.com`;
       const pwd = 'ConcurrentPassword12345!';
 
-      // Run two bootstrapOwner calls concurrently
+      // Run two bootstrapOwner calls concurrently against testPool
       const [resA, resB] = await Promise.all([
-        bootstrapOwner({ email: emailA, password: pwd }),
-        bootstrapOwner({ email: emailB, password: pwd }),
+        bootstrapOwner({ email: emailA, password: pwd, pool: testPool }),
+        bootstrapOwner({ email: emailB, password: pwd, pool: testPool }),
       ]);
 
       const outcomes = [resA.status, resB.status];
@@ -351,30 +415,44 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
       const createdCount = outcomes.filter((s) => s === 'created').length;
       assert.equal(createdCount, 1, 'Never more than one owner created');
 
-      const ownerRows = await pool.query("SELECT id, email FROM users WHERE role = 'owner';");
+      const ownerRows = await testPool.query("SELECT id, email FROM users WHERE role = 'owner';");
       assert.equal(ownerRows.rows.length, 1, 'Database must contain exactly 1 owner record');
-      createdUserIds.push(ownerRows.rows[0].id);
+      bootstrappedOwnerId = ownerRows.rows[0].id;
+      createdUserIds.push(bootstrappedOwnerId);
     });
   });
 
   // ==========================================================================
-  // 5. Administrative Password Recovery & Session Revocation
+  // 6. Administrative Password Recovery & Session Revocation
   // ==========================================================================
   describe('Administrative Password Recovery CLI', () => {
     let ownerId;
     let oldHash;
 
     before(async () => {
-      const ownerRes = await pool.query("SELECT id, password_hash FROM users WHERE role = 'owner' LIMIT 1;");
-      ownerId = ownerRes.rows[0].id;
-      oldHash = ownerRes.rows[0].password_hash;
+      const ownerRes = await testPool.query("SELECT id, password_hash FROM users WHERE role = 'owner' LIMIT 1;");
+      if (ownerRes.rows.length === 0) {
+        const dummyHash = await hashPassword('BaselineOwnerPassword2026!');
+        const insertRes = await testPool.query(
+          `INSERT INTO users (email, password_hash, role, status)
+           VALUES ($1, $2, 'owner', 'active')
+           RETURNING id, password_hash;`,
+          [`recovery-owner-${Date.now()}@namlatic.com`, dummyHash]
+        );
+        ownerId = insertRes.rows[0].id;
+        oldHash = insertRes.rows[0].password_hash;
+        createdUserIds.push(ownerId);
+      } else {
+        ownerId = ownerRes.rows[0].id;
+        oldHash = ownerRes.rows[0].password_hash;
+      }
 
       // Create 2 active sessions for this owner
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
       const idleExpiresAt = new Date(now.getTime() + 2 * 60 * 60 * 1000);
 
-      await pool.query(
+      await testPool.query(
         `INSERT INTO sessions (user_id, token_hash, expires_at, idle_expires_at)
          VALUES ($1, $2, $3, $4), ($1, $5, $3, $4);`,
         [
@@ -390,20 +468,20 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
     it('updates owner password hash and revokes all active sessions', async () => {
       const newPassword = 'NewlyResetOwnerPassword2026!';
 
-      const result = await resetOwnerPassword({ newPassword });
+      const result = await resetOwnerPassword({ newPassword, pool: testPool });
       assert.equal(result.status, 'success');
       assert.equal(result.reset, true);
       assert.equal(result.revokedCount, 2);
 
       // Verify database updated
-      const updatedUser = (await pool.query('SELECT password_hash FROM users WHERE id = $1;', [ownerId])).rows[0];
+      const updatedUser = (await testPool.query('SELECT password_hash FROM users WHERE id = $1;', [ownerId])).rows[0];
       assert.notEqual(updatedUser.password_hash, oldHash);
 
       const verifiesNew = await verifyPassword(updatedUser.password_hash, newPassword);
       assert.equal(verifiesNew, true, 'New password verifies against updated hash');
 
       // Verify sessions are marked revoked (revoked_at IS NOT NULL)
-      const sessions = await pool.query('SELECT revoked_at FROM sessions WHERE user_id = $1;', [ownerId]);
+      const sessions = await testPool.query('SELECT revoked_at FROM sessions WHERE user_id = $1;', [ownerId]);
       assert.equal(sessions.rows.length, 2);
       for (const row of sessions.rows) {
         assert.notEqual(row.revoked_at, null, 'Session must have non-null revoked_at');
@@ -411,10 +489,12 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
     });
 
     it('rejects password reset when no owner account exists', async () => {
-      // Temporarily remove owner
-      await pool.query("DELETE FROM users WHERE role = 'owner';");
+      // Safely delete only the test owner by specific ID
+      await testPool.query('DELETE FROM users WHERE id = $1;', [ownerId]);
+      const idx = createdUserIds.indexOf(ownerId);
+      if (idx !== -1) createdUserIds.splice(idx, 1);
 
-      const res = await resetOwnerPassword({ newPassword: 'AnyValidPassword12345!' });
+      const res = await resetOwnerPassword({ newPassword: 'AnyValidPassword12345!', pool: testPool });
       assert.equal(res.status, 'not_found');
       assert.equal(res.reset, false);
     });

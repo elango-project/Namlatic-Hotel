@@ -152,9 +152,9 @@ namlatic-hotel-portal/
 
 ## 5. Running Automated Tests
 
-The test suite includes **340 automated tests** across the entire full-stack architecture:
-- **Backend Unit Tests:** 138 passed (`node:test`)
-- **Backend Integration Tests:** 63 passed (HTTP + Live PostgreSQL 18.6)
+The test suite includes **402 automated tests** across the entire full-stack architecture:
+- **Backend Unit Tests:** 183 passed (`node:test`)
+- **Backend Integration Tests:** 80 passed (HTTP + Live PostgreSQL 18.6: 17 auth/migration tests + 63 hotel API tests)
 - **Frontend Unit Tests:** 139 passed (Vitest + React Testing Library)
 
 ```powershell
@@ -213,6 +213,7 @@ npm test
 - [x] **Phase 5E.2: Final Frontend Environment and Media URL Safety** (Made `VITE_API_URL` strictly mandatory in production while rejecting legacy `VITE_API_BASE_URL` fallback, hardened URL validation rejecting embedded credentials, query strings, URL fragments, and localhost, implemented mixed-content defense in `getImageUrl()` rejecting HTTP images in production while permitting them in development, 340 automated tests passing)
 - [x] **Phase 5F-A1: Owner Authentication Architecture & Security Design** (Comprehensive read-only architectural specification for same-origin Vercel proxy, Argon2id credentials, tokenless CSRF with `X-Requested-With`, PostgreSQL-backed sessions, and DoS-resilient abuse throttling without account lockout)
 - [x] **Phase 5F-A2.1: Authentication Database & Password Infrastructure** (Incremental PostgreSQL migration `002_create_auth_tables.sql` establishing `users` singleton and `sessions` tables, transactional `migrate.js` runner, Argon2id password service with process-local bounded concurrency semaphore, strict Unicode code-point validation, one-time owner bootstrap CLI, and administrative password recovery CLI. 379 automated tests passing)
+- [x] **Phase 5F-A2.1.1: Authentication Infrastructure Safety Corrections** (Dedicated `TEST_DATABASE_URL` test isolation, runtime safety guards rejecting production and non-test databases, temporary test record ID tracking eliminating broad owner deletions, native TTY masked input tooling with raw mode and Unicode backspace support, pre-semaphore 128-byte limit enforcement in `verifyPassword`, incremental migration `003_correct_session_expiry_indexes.sql` creating separate B-tree indexes for `expires_at` and `idle_expires_at`, migration concurrency advisory locking with clean skip, constant-time dummy hash verification. 402 automated tests passing)
 - [ ] **Phase 5F-A2.2: Backend Authentication Middleware & Route Lockdown** (Session token issuance/revocation, `__Host-` cookie management, tokenless CSRF middleware, timing-safe proxy-secret validation, and `/api/hotels/*` route protection)
 - [ ] **Phase 5F-A2.3: Backend Security Verification** (Full backend integration tests, direct API isolation, error handling, regression audit)
 - [ ] **Phase 5F-A3: Frontend Authentication UI & Protected Routing** (Login page, Redux authSlice, ProtectedRoute, session bootstrap, logout control)

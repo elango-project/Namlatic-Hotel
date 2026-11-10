@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const { pool } = require('../../src/config/db');
+const { getTestPool, closeTestPool } = require('../helpers/testDb');
+const { pool, setPool, resetPool } = require('../../src/config/db');
 const app = require('../../src/app');
 const hotelService = require('../../src/services/hotel.service');
 const { safeDeleteHotelImage } = hotelService;
@@ -118,6 +119,10 @@ async function runIntegrationTests() {
   console.log('====================================================');
   console.log('   NAMLATIC HOTEL INTEGRATION SUITE (PHASE 3A & 3B) ');
   console.log('====================================================\n');
+
+  // Configure dedicated test database pool
+  const testPool = getTestPool();
+  setPool(testPool);
 
   // Start isolated test server
   await new Promise((resolve) => {
@@ -1635,8 +1640,11 @@ async function runIntegrationTests() {
     }
 
     // Close server and database pool
-    await new Promise((resolve) => server.close(resolve));
-    await pool.end();
+    if (server) {
+      await new Promise((resolve) => server.close(resolve));
+    }
+    resetPool();
+    await closeTestPool();
   }
 
   const passedCount = results.filter((r) => r.passed).length;

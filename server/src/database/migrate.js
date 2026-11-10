@@ -4,6 +4,9 @@ const { pool } = require('../config/db');
 
 const MIGRATIONS_DIR = path.resolve(__dirname, 'migrations');
 
+// Distinct advisory lock identifier from owner bootstrap (987654321)
+const MIGRATION_ADVISORY_LOCK_ID = 987654322;
+
 /**
  * Initializes the schema_migrations tracking table if not present.
  * @param {import('pg').PoolClient} client
@@ -19,30 +22,60 @@ async function ensureMigrationsTable(client) {
 }
 
 /**
- * Executes all pending SQL migration files transactionally in alphabetical order.
+ * Executes all pending SQL migration files transactionally in alphabetical order,
+ * protected by a pinned-client session advisory lock to prevent race conditions.
  *
- * @param {import('pg').PoolClient} [customClient] - Optional client (e.g. for testing)
- * @returns {Promise<{ applied: string[], skipped: string[] }>}
+ * @param {import('pg').PoolClient | import('pg').Pool} [customTarget] - Optional client or pool
+ * @returns {Promise<{ applied: string[], skipped: string[], locked?: boolean }>}
  */
-async function runMigrations(customClient = null) {
-  const client = customClient || (await pool.connect());
-  const shouldRelease = !customClient;
+async function runMigrations(customTarget = null) {
+  let client;
+  let shouldRelease = false;
 
-  const applied = [];
-  const skipped = [];
+  if (customTarget && typeof customTarget.connect === 'function' && typeof customTarget.query === 'function') {
+    // If a Pool was passed, acquire a dedicated client from it
+    client = await customTarget.connect();
+    shouldRelease = true;
+  } else if (customTarget && typeof customTarget.query === 'function') {
+    // If a PoolClient was passed, pin it directly
+    client = customTarget;
+    shouldRelease = false;
+  } else {
+    client = await pool.connect();
+    shouldRelease = true;
+  }
+
+  let lockAcquired = false;
 
   try {
+    // 1. Acquire session-level advisory lock on this pinned client before reading applied versions
+    const lockRes = await client.query(
+      'SELECT pg_try_advisory_lock($1) AS acquired',
+      [MIGRATION_ADVISORY_LOCK_ID]
+    );
+
+    if (!lockRes.rows[0].acquired) {
+      console.log('[MIGRATE] Another migration runner is currently active. Exiting cleanly.');
+      return { applied: [], skipped: [], locked: true };
+    }
+
+    lockAcquired = true;
+
+    // 2. Ensure schema_migrations table exists
     await ensureMigrationsTable(client);
 
-    // Fetch previously applied migration versions
+    // 3. Fetch previously applied migration versions
     const { rows } = await client.query('SELECT version FROM schema_migrations ORDER BY version ASC');
     const appliedSet = new Set(rows.map((r) => r.version));
 
-    // Read all .sql files in migrations directory sorted alphabetically
+    // 4. Read all .sql files in migrations directory sorted alphabetically
     const files = fs
       .readdirSync(MIGRATIONS_DIR)
       .filter((file) => file.endsWith('.sql'))
       .sort();
+
+    const applied = [];
+    const skipped = [];
 
     for (const file of files) {
       if (appliedSet.has(file)) {
@@ -70,8 +103,12 @@ async function runMigrations(customClient = null) {
       }
     }
 
-    return { applied, skipped };
+    return { applied, skipped, locked: false };
   } finally {
+    // 5. Always release the advisory lock on this client
+    if (lockAcquired) {
+      await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_ADVISORY_LOCK_ID]).catch(() => {});
+    }
     if (shouldRelease) {
       client.release();
     }
@@ -82,10 +119,14 @@ async function runMigrations(customClient = null) {
 if (require.main === module) {
   console.log('[MIGRATE] Starting database migrations...');
   runMigrations()
-    .then(({ applied, skipped }) => {
-      console.log(
-        `[MIGRATE] Completed. Applied: ${applied.length}, Skipped (Already applied): ${skipped.length}`
-      );
+    .then(({ applied, skipped, locked }) => {
+      if (locked) {
+        console.log('[MIGRATE] Process exited because another migration runner was active.');
+      } else {
+        console.log(
+          `[MIGRATE] Completed. Applied: ${applied.length}, Skipped (Already applied): ${skipped.length}`
+        );
+      }
       return pool.end();
     })
     .then(() => {
@@ -98,6 +139,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  MIGRATION_ADVISORY_LOCK_ID,
   runMigrations,
   ensureMigrationsTable,
 };
