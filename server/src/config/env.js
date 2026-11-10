@@ -324,7 +324,8 @@ function parseRateLimitConfig(rawEnv, nodeEnv) {
 /**
  * Parses and validates the media storage driver.
  * Supported values: 'local' | 'r2'
- * Fails fast in production if undefined/empty to prevent silent fallback to local disk.
+ * In development and test, defaults to 'local'.
+ * In production, strictly requires 'r2' and rejects missing driver or 'local'.
  *
  * @param {Record<string, string|undefined>} rawEnv
  * @param {string} nodeEnv
@@ -332,11 +333,12 @@ function parseRateLimitConfig(rawEnv, nodeEnv) {
  */
 function parseMediaStorageDriver(rawEnv = process.env, nodeEnv = 'development') {
   const rawDriver = rawEnv.MEDIA_STORAGE_DRIVER;
+  const isProduction = nodeEnv === 'production';
 
   if (!rawDriver || rawDriver.trim() === '') {
-    if (nodeEnv === 'production') {
+    if (isProduction) {
       throw new Error(
-        'Missing MEDIA_STORAGE_DRIVER in production. Production must explicitly configure durable cloud storage ("r2"). Silent fallback to local ephemeral disk storage is prohibited.'
+        'Missing MEDIA_STORAGE_DRIVER in production. Production requires "MEDIA_STORAGE_DRIVER=r2". Local disk storage is prohibited in production.'
       );
     }
     return 'local';
@@ -344,6 +346,11 @@ function parseMediaStorageDriver(rawEnv = process.env, nodeEnv = 'development') 
 
   const normalized = rawDriver.trim().toLowerCase();
   if (normalized === 'local') {
+    if (isProduction) {
+      throw new Error(
+        'In production, MEDIA_STORAGE_DRIVER cannot be "local". Production requires durable cloud storage ("MEDIA_STORAGE_DRIVER=r2") because local container storage is ephemeral.'
+      );
+    }
     return 'local';
   }
   if (normalized === 'r2') {
@@ -361,9 +368,10 @@ function parseMediaStorageDriver(rawEnv = process.env, nodeEnv = 'development') 
  * Never leaks secret keys or access keys in error messages.
  *
  * @param {Record<string, string|undefined>} rawEnv
+ * @param {string} [nodeEnv]
  * @returns {{ accountId: string, accessKeyId: string, secretAccessKey: string, bucketName: string, publicBaseUrl: string, endpoint: string, region: string }}
  */
-function parseR2Config(rawEnv = process.env) {
+function parseR2Config(rawEnv = process.env, nodeEnv = rawEnv.NODE_ENV || 'development') {
   const accountId = rawEnv.R2_ACCOUNT_ID ? rawEnv.R2_ACCOUNT_ID.trim() : '';
   const accessKeyId = rawEnv.R2_ACCESS_KEY_ID ? rawEnv.R2_ACCESS_KEY_ID.trim() : '';
   const secretAccessKey = rawEnv.R2_SECRET_ACCESS_KEY ? rawEnv.R2_SECRET_ACCESS_KEY.trim() : '';
@@ -392,6 +400,26 @@ function parseR2Config(rawEnv = process.env) {
 
   if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
     throw new Error('R2 configuration error: R2_PUBLIC_BASE_URL protocol must be "http:" or "https:".');
+  }
+
+  if (nodeEnv === 'production' && parsedUrl.protocol !== 'https:') {
+    throw new Error('R2 configuration error: In production, R2_PUBLIC_BASE_URL must use the "https:" protocol.');
+  }
+
+  if (!parsedUrl.hostname || parsedUrl.hostname.trim() === '') {
+    throw new Error('R2 configuration error: R2_PUBLIC_BASE_URL must contain a valid hostname.');
+  }
+
+  if (parsedUrl.username || parsedUrl.password) {
+    throw new Error('R2 configuration error: R2_PUBLIC_BASE_URL cannot contain embedded credentials (username or password).');
+  }
+
+  if (parsedUrl.search && parsedUrl.search !== '') {
+    throw new Error('R2 configuration error: R2_PUBLIC_BASE_URL must not contain query parameters.');
+  }
+
+  if (parsedUrl.hash && parsedUrl.hash !== '') {
+    throw new Error('R2 configuration error: R2_PUBLIC_BASE_URL must not contain a URL hash/fragment.');
   }
 
   // Strip trailing slashes to guarantee clean concatenation: ${publicBaseUrl}/${key}
@@ -429,7 +457,7 @@ function parseAndValidateEnv(rawEnv = process.env) {
   const dbConfig = validateDatabaseConfig(rawEnv);
 
   const mediaStorageDriver = parseMediaStorageDriver(rawEnv, nodeEnv);
-  const r2Config = mediaStorageDriver === 'r2' ? parseR2Config(rawEnv) : null;
+  const r2Config = mediaStorageDriver === 'r2' ? parseR2Config(rawEnv, nodeEnv) : null;
 
   return {
     port,

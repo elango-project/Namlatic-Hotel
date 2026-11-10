@@ -77,6 +77,12 @@ class R2StorageAdapter {
     try {
       fileBuffer = await fs.promises.readFile(file.path);
     } catch (readErr) {
+      // Ensure best-effort cleanup of staged Multer file on read failure
+      await fs.promises.unlink(file.path).catch((cleanupErr) => {
+        if (cleanupErr.code !== 'ENOENT') {
+          console.warn('[STORAGE WARNING] Failed to clean up staged file after read failure:', cleanupErr.message);
+        }
+      });
       throw new Error(`R2 upload error: Failed to read local staged file: ${readErr.message}`);
     }
 
@@ -92,7 +98,12 @@ class R2StorageAdapter {
       await this.s3Client.send(command);
 
       // Clean up the local staged file after successful cloud upload
-      await fs.promises.unlink(file.path).catch(() => {});
+      // Do not fail upload or delete R2 object if local file cleanup fails
+      await fs.promises.unlink(file.path).catch((cleanupErr) => {
+        if (cleanupErr.code !== 'ENOENT') {
+          console.warn('[STORAGE WARNING] Failed to clean up local staged file after upload:', cleanupErr.message);
+        }
+      });
 
       const storageReference = `r2:${key}`;
       const publicUrl = `${this.publicBaseUrl}/${key}`;
@@ -104,7 +115,11 @@ class R2StorageAdapter {
       };
     } catch (s3Err) {
       // Clean up local staged file on failure to prevent disk leakage
-      await fs.promises.unlink(file.path).catch(() => {});
+      await fs.promises.unlink(file.path).catch((cleanupErr) => {
+        if (cleanupErr.code !== 'ENOENT') {
+          console.warn('[STORAGE WARNING] Failed to clean up local staged file after upload failure:', cleanupErr.message);
+        }
+      });
       console.error('[R2 STORAGE ERROR] PutObject failed:', s3Err.message);
       throw new Error(`Failed to upload media to Cloudflare R2: ${s3Err.message}`);
     }

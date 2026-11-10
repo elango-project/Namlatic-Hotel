@@ -1533,6 +1533,85 @@ async function runIntegrationTests() {
       );
     }
 
+    // Test 63: R2 RESILIENCE: db.pool.connect() failure during updateHotel triggers compensating delete of newly uploaded R2 image
+    {
+      const baseTmpFile = path.resolve(SRC_DIR, 'uploads/hotels', 'base-connect-fail.jpg');
+      await fs.promises.writeFile(baseTmpFile, VALID_JPEG);
+
+      const baseHotel = await hotelService.createHotel(
+        {
+          title: 'Hotel for Pool Connect Failure Test',
+          description: 'Testing compensating delete when database connection acquisition fails.',
+          latitude: 24.5,
+          longitude: 54.5,
+          price: 280.0,
+        },
+        {
+          path: baseTmpFile,
+          filename: 'base-connect-fail.jpg',
+          verifiedMimeType: 'image/jpeg',
+          verifiedExtension: '.jpg',
+        }
+      );
+      if (baseHotel?.id) createdHotelIds.push(baseHotel.id);
+
+      const dbCheckBefore = await pool.query('SELECT image_path FROM hotels WHERE id = $1;', [baseHotel.id]);
+      const originalImageRef = dbCheckBefore.rows[0].image_path;
+
+      s3Calls.length = 0;
+      const newTmpFile = path.resolve(SRC_DIR, 'uploads/hotels', 'connect-fail-replacement.png');
+      await fs.promises.writeFile(newTmpFile, VALID_PNG);
+
+      // Simulate db.pool.connect() failure
+      const dbConfig = require('../../src/config/db');
+      const origConnect = dbConfig.pool.connect;
+      dbConfig.pool.connect = async () => {
+        throw new Error('Simulated pool.connect() acquisition timeout');
+      };
+
+      let threwConnectError = false;
+      try {
+        await hotelService.updateHotel(
+          baseHotel.id,
+          {
+            title: 'Hotel Attempted Update',
+            description: 'This update should fail at pool.connect',
+            latitude: 24.5,
+            longitude: 54.5,
+            price: 290.0,
+          },
+          {
+            path: newTmpFile,
+            filename: 'connect-fail-replacement.png',
+            verifiedMimeType: 'image/png',
+            verifiedExtension: '.png',
+          }
+        );
+      } catch (err) {
+        threwConnectError = err.message.includes('Simulated pool.connect() acquisition timeout');
+      } finally {
+        dbConfig.pool.connect = origConnect;
+      }
+
+      const dbCheckAfter = await pool.query('SELECT image_path FROM hotels WHERE id = $1;', [baseHotel.id]);
+      const currentImageRef = dbCheckAfter.rows[0].image_path;
+
+      // S3 should have received PutObject for the new image AND compensating DeleteObject for that new image
+      const putCalls = s3Calls.filter((c) => c.input?.Key && c.input?.Body);
+      const deleteCalls = s3Calls.filter((c) => c.input?.Key && !c.input?.Body);
+      const uploadedKey = putCalls[0]?.input?.Key;
+      const deletedKey = deleteCalls[0]?.input?.Key;
+
+      assert(
+        'R2 RESILIENCE: Database connection failure during update triggers compensating delete of uploaded R2 object',
+        threwConnectError &&
+          uploadedKey !== undefined &&
+          deletedKey === uploadedKey &&
+          currentImageRef === originalImageRef,
+        `threw=${threwConnectError}, uploadedKey=${uploadedKey}, deletedKey=${deletedKey}, currentRef=${currentImageRef}`
+      );
+    }
+
     // Reset storage service to default local driver
     resetStorageService();
   } finally {

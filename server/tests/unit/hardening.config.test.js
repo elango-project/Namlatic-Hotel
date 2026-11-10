@@ -16,7 +16,12 @@ describe('Unit Tests: Express Backend Hardening Configuration (Phase 5C)', () =>
       const config = parseAndValidateEnv({
         PORT: '10000',
         NODE_ENV: 'production',
-        MEDIA_STORAGE_DRIVER: 'local',
+        MEDIA_STORAGE_DRIVER: 'r2',
+        R2_ACCOUNT_ID: 'acc123',
+        R2_ACCESS_KEY_ID: 'key123',
+        R2_SECRET_ACCESS_KEY: 'sec123',
+        R2_BUCKET_NAME: 'hotel-bucket',
+        R2_PUBLIC_BASE_URL: 'https://cdn.example.com',
         DATABASE_URL: 'postgresql://user:pass@ep-host.aws.neon.tech/neondb?sslmode=require&channel_binding=prefer',
       });
       assert.equal(config.port, 10000);

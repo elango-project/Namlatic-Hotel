@@ -6,7 +6,7 @@ const os = require('os');
 const { LocalStorageAdapter } = require('../../src/storage/localStorage');
 const { R2StorageAdapter } = require('../../src/storage/r2Storage');
 const { createStorageService } = require('../../src/storage');
-const { parseMediaStorageDriver, parseR2Config } = require('../../src/config/env');
+const { parseMediaStorageDriver, parseR2Config, parseAndValidateEnv } = require('../../src/config/env');
 
 describe('Unit Tests: Cloudflare R2 & Media Storage Abstraction (Phase 5D)', () => {
   // --------------------------------------------------------------------------
@@ -21,11 +21,11 @@ describe('Unit Tests: Cloudflare R2 & Media Storage Abstraction (Phase 5D)', () 
       assert.equal(testDriver, 'local');
     });
 
-    it('parses valid "local" and "r2" drivers case-insensitively', () => {
-      assert.equal(parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'local' }), 'local');
-      assert.equal(parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'LOCAL' }), 'local');
-      assert.equal(parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'r2' }), 'r2');
-      assert.equal(parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'R2 ' }), 'r2');
+    it('parses valid "local" and "r2" drivers in development', () => {
+      assert.equal(parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'local' }, 'development'), 'local');
+      assert.equal(parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'LOCAL' }, 'development'), 'local');
+      assert.equal(parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'r2' }, 'development'), 'r2');
+      assert.equal(parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'R2 ' }, 'development'), 'r2');
     });
 
     it('strictly forbids silent fallback in production when MEDIA_STORAGE_DRIVER is omitted', () => {
@@ -39,6 +39,17 @@ describe('Unit Tests: Cloudflare R2 & Media Storage Abstraction (Phase 5D)', () 
       );
     });
 
+    it('strictly rejects MEDIA_STORAGE_DRIVER="local" in production', () => {
+      assert.throws(
+        () => parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'local' }, 'production'),
+        /In production, MEDIA_STORAGE_DRIVER cannot be "local"/
+      );
+      assert.throws(
+        () => parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'LOCAL' }, 'production'),
+        /In production, MEDIA_STORAGE_DRIVER cannot be "local"/
+      );
+    });
+
     it('rejects unknown storage drivers with a descriptive error', () => {
       assert.throws(
         () => parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 's3' }),
@@ -48,6 +59,37 @@ describe('Unit Tests: Cloudflare R2 & Media Storage Abstraction (Phase 5D)', () 
         () => parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'azure_blob' }),
         /Invalid MEDIA_STORAGE_DRIVER: "azure_blob"/
       );
+    });
+
+    it('rejects production with "r2" when R2 credentials are missing', () => {
+      assert.throws(
+        () =>
+          parseAndValidateEnv({
+            NODE_ENV: 'production',
+            MEDIA_STORAGE_DRIVER: 'r2',
+            DATABASE_URL: 'postgresql://user:pass@ep-host.aws.neon.tech/neondb?sslmode=require&channel_binding=prefer',
+          }),
+        /R2 configuration error: Missing required environment variable\(s\)/
+      );
+    });
+
+    it('accepts valid production R2 configuration', () => {
+      const config = parseAndValidateEnv({
+        NODE_ENV: 'production',
+        MEDIA_STORAGE_DRIVER: 'r2',
+        R2_ACCOUNT_ID: 'acc1234567890def',
+        R2_ACCESS_KEY_ID: 'key_id_xyz',
+        R2_SECRET_ACCESS_KEY: 'secret_key_super_secret',
+        R2_BUCKET_NAME: 'namlatic-hotel-media',
+        R2_PUBLIC_BASE_URL: 'https://cdn.namlatic.com',
+        DATABASE_URL: 'postgresql://user:pass@ep-host.aws.neon.tech/neondb?sslmode=require&channel_binding=prefer',
+      });
+
+      assert.equal(config.mediaStorageDriver, 'r2');
+      assert.equal(config.r2Config.bucketName, 'namlatic-hotel-media');
+      assert.equal(config.r2Config.publicBaseUrl, 'https://cdn.namlatic.com');
+      assert.equal(config.r2Config.endpoint, 'https://acc1234567890def.r2.cloudflarestorage.com');
+      assert.equal(config.r2Config.region, 'auto');
     });
 
     it('parses valid R2 configuration and normalizes endpoint and base URL', () => {
@@ -109,6 +151,127 @@ describe('Unit Tests: Cloudflare R2 & Media Storage Abstraction (Phase 5D)', () 
           }),
         /R2_PUBLIC_BASE_URL protocol must be "http:" or "https:"/
       );
+    });
+
+    it('rejects HTTP protocol in production for R2_PUBLIC_BASE_URL', () => {
+      assert.throws(
+        () =>
+          parseR2Config(
+            {
+              R2_ACCOUNT_ID: 'acc',
+              R2_ACCESS_KEY_ID: 'key',
+              R2_SECRET_ACCESS_KEY: 'sec',
+              R2_BUCKET_NAME: 'bucket',
+              R2_PUBLIC_BASE_URL: 'http://cdn.namlatic.com',
+            },
+            'production'
+          ),
+        /In production, R2_PUBLIC_BASE_URL must use the "https:" protocol/
+      );
+    });
+
+    it('permits HTTP protocol in development and test environments', () => {
+      const devConf = parseR2Config(
+        {
+          R2_ACCOUNT_ID: 'acc',
+          R2_ACCESS_KEY_ID: 'key',
+          R2_SECRET_ACCESS_KEY: 'sec',
+          R2_BUCKET_NAME: 'bucket',
+          R2_PUBLIC_BASE_URL: 'http://localhost:9000',
+        },
+        'development'
+      );
+      assert.equal(devConf.publicBaseUrl, 'http://localhost:9000');
+
+      const testConf = parseR2Config(
+        {
+          R2_ACCOUNT_ID: 'acc',
+          R2_ACCESS_KEY_ID: 'key',
+          R2_SECRET_ACCESS_KEY: 'sec',
+          R2_BUCKET_NAME: 'bucket',
+          R2_PUBLIC_BASE_URL: 'http://127.0.0.1:9000',
+        },
+        'test'
+      );
+      assert.equal(testConf.publicBaseUrl, 'http://127.0.0.1:9000');
+    });
+
+    it('rejects embedded credentials in R2_PUBLIC_BASE_URL', () => {
+      assert.throws(
+        () =>
+          parseR2Config({
+            R2_ACCOUNT_ID: 'acc',
+            R2_ACCESS_KEY_ID: 'key',
+            R2_SECRET_ACCESS_KEY: 'sec',
+            R2_BUCKET_NAME: 'bucket',
+            R2_PUBLIC_BASE_URL: 'https://user:password123@cdn.namlatic.com',
+          }),
+        /R2_PUBLIC_BASE_URL cannot contain embedded credentials \(username or password\)/
+      );
+    });
+
+    it('rejects query parameters in R2_PUBLIC_BASE_URL', () => {
+      assert.throws(
+        () =>
+          parseR2Config({
+            R2_ACCOUNT_ID: 'acc',
+            R2_ACCESS_KEY_ID: 'key',
+            R2_SECRET_ACCESS_KEY: 'sec',
+            R2_BUCKET_NAME: 'bucket',
+            R2_PUBLIC_BASE_URL: 'https://cdn.namlatic.com?token=xyz',
+          }),
+        /R2_PUBLIC_BASE_URL must not contain query parameters/
+      );
+    });
+
+    it('rejects URL hash / fragments in R2_PUBLIC_BASE_URL', () => {
+      assert.throws(
+        () =>
+          parseR2Config({
+            R2_ACCOUNT_ID: 'acc',
+            R2_ACCESS_KEY_ID: 'key',
+            R2_SECRET_ACCESS_KEY: 'sec',
+            R2_BUCKET_NAME: 'bucket',
+            R2_PUBLIC_BASE_URL: 'https://cdn.namlatic.com#top',
+          }),
+        /R2_PUBLIC_BASE_URL must not contain a URL hash\/fragment/
+      );
+    });
+
+    it('rejects malformed URLs without a valid hostname in R2_PUBLIC_BASE_URL', () => {
+      assert.throws(
+        () =>
+          parseR2Config({
+            R2_ACCOUNT_ID: 'acc',
+            R2_ACCESS_KEY_ID: 'key',
+            R2_SECRET_ACCESS_KEY: 'sec',
+            R2_BUCKET_NAME: 'bucket',
+            R2_PUBLIC_BASE_URL: 'https://',
+          }),
+        /R2_PUBLIC_BASE_URL must be a valid HTTP or HTTPS URL/
+      );
+    });
+
+    it('normalizes multiple trailing slashes consistently', () => {
+      const conf = parseR2Config({
+        R2_ACCOUNT_ID: 'acc',
+        R2_ACCESS_KEY_ID: 'key',
+        R2_SECRET_ACCESS_KEY: 'sec',
+        R2_BUCKET_NAME: 'bucket',
+        R2_PUBLIC_BASE_URL: 'https://cdn.namlatic.com///',
+      });
+      assert.equal(conf.publicBaseUrl, 'https://cdn.namlatic.com');
+    });
+
+    it('supports valid custom Cloudflare domains', () => {
+      const conf = parseR2Config({
+        R2_ACCOUNT_ID: 'acc',
+        R2_ACCESS_KEY_ID: 'key',
+        R2_SECRET_ACCESS_KEY: 'sec',
+        R2_BUCKET_NAME: 'bucket',
+        R2_PUBLIC_BASE_URL: 'https://media.namlatic.com',
+      });
+      assert.equal(conf.publicBaseUrl, 'https://media.namlatic.com');
     });
 
     it('never leaks secret keys or access keys in error messages', () => {
@@ -297,6 +460,83 @@ describe('Unit Tests: Cloudflare R2 & Media Storage Abstraction (Phase 5D)', () 
 
       // Verify staged file was cleaned up on failure
       assert.equal(fs.existsSync(failedStagedPath), false);
+    });
+
+    it('unlinks staged local file if fs.promises.readFile fails', async () => {
+      const adapter = new R2StorageAdapter({
+        accountId: 'acc',
+        accessKeyId: 'key',
+        secretAccessKey: 'sec',
+        bucketName: 'bucket',
+        publicBaseUrl: 'https://cdn.example.com',
+        s3Client: { send: async () => {} },
+      });
+
+      const failedReadPath = path.join(tmpDir, 'failed-read.jpg');
+      fs.writeFileSync(failedReadPath, Buffer.from('data'));
+      assert.equal(fs.existsSync(failedReadPath), true);
+
+      const origReadFile = fs.promises.readFile;
+      fs.promises.readFile = async () => {
+        throw new Error('EACCES: permission denied');
+      };
+
+      try {
+        await assert.rejects(
+          () =>
+            adapter.upload({
+              path: failedReadPath,
+              verifiedMimeType: 'image/jpeg',
+            }),
+          /R2 upload error: Failed to read local staged file: EACCES: permission denied/
+        );
+      } finally {
+        fs.promises.readFile = origReadFile;
+      }
+
+      // Verify staged file was unlinked on read failure
+      assert.equal(fs.existsSync(failedReadPath), false);
+    });
+
+    it('does not fail upload or delete R2 object if local staged file unlink fails', async () => {
+      const sentCommands = [];
+      const adapter = new R2StorageAdapter({
+        accountId: 'acc',
+        accessKeyId: 'key',
+        secretAccessKey: 'sec',
+        bucketName: 'bucket',
+        publicBaseUrl: 'https://cdn.example.com',
+        s3Client: {
+          send: async (cmd) => {
+            sentCommands.push(cmd);
+            return {};
+          },
+        },
+      });
+
+      const stagedPath = path.join(tmpDir, 'unlink-fail.jpg');
+      fs.writeFileSync(stagedPath, Buffer.from([0xff, 0xd8, 0xff]));
+
+      const origUnlink = fs.promises.unlink;
+      fs.promises.unlink = async () => {
+        const err = new Error('EBUSY: resource locked');
+        err.code = 'EBUSY';
+        throw err;
+      };
+
+      try {
+        const result = await adapter.upload({
+          path: stagedPath,
+          verifiedMimeType: 'image/jpeg',
+        });
+        assert.equal(result.storageReference.startsWith('r2:'), true);
+        assert.equal(sentCommands.length, 1); // PutObject sent, NOT DeleteObject
+      } finally {
+        fs.promises.unlink = origUnlink;
+        if (fs.existsSync(stagedPath)) {
+          fs.unlinkSync(stagedPath);
+        }
+      }
     });
 
     it('sends DeleteObjectCommand with correct bucket and key for r2: references', async () => {

@@ -46,12 +46,13 @@ Built entirely using Node.js's built-in `node:test` framework to avoid bloating 
    - Rate Limit Headers & Payload: Verifies standard draft headers (`RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`) and consistent JSON error response structure on HTTP 429.
    - Body Size Limits: Verifies default 10kb JSON body limit and handles payload truncation.
    - Production Error Sanitization: Masks stack traces and internal errors to `"Internal server error"` when `NODE_ENV === 'production'`.
-6. **`storage.test.js` (25 tests - Phase 5D):**
-   - Driver router semantics: Verifies driver switching (`local` vs `r2`), defaults to `local` in test/dev, strictly forbids missing `MEDIA_STORAGE_DRIVER` in production without silent fallback, and rejects unknown drivers.
-   - Cloudflare R2 configuration: Verifies required variables (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_PUBLIC_BASE_URL`), normalizes endpoint (`https://${accountId}.r2.cloudflarestorage.com`) and region (`auto`), validates HTTP/HTTPS base URL, strips trailing slashes, and prevents credential leakage in error messages.
+6. **`storage.test.js` (38 tests - Phases 5D & 5D.1):**
+   - Driver router semantics: Verifies driver switching (`local` vs `r2`), defaults to `local` in test/dev, strictly forbids missing `MEDIA_STORAGE_DRIVER` in production without silent fallback, strictly rejects `MEDIA_STORAGE_DRIVER="local"` in production, and rejects unknown drivers.
+   - Cloudflare R2 configuration & URL validation: Verifies required variables (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_PUBLIC_BASE_URL`), normalizes endpoint (`https://${accountId}.r2.cloudflarestorage.com`) and region (`auto`), strictly requires `https:` protocol in production, permits `http:` in development/test, rejects embedded credentials, query strings, URL fragments, and malformed URLs without valid hostnames, normalizes multiple trailing slashes consistently, supports valid custom Cloudflare domains, and prevents credential leakage in error messages.
    - Object key generation: Verifies UUID-based server keys (`hotels/<uuid>.<ext>`) and path traversal protection.
    - Binary MIME detection: Verifies magic-byte extraction maps binary signatures directly to verified MIME types (`image/jpeg`, `image/png`, `image/webp`).
    - S3 command parameters: Verifies `PutObjectCommand` receives verified MIME type and immutable cache-control header (`public, max-age=31536000, immutable`).
+   - Staged-file cleanup resilience: Verifies local staged file is unlinked on S3 upload failure, on local `readFile` failure, and verifies local unlink failures do not cause false-alarm upload failures or deletion of uploaded cloud objects.
    - Public URL resolution: Verifies `r2:hotels/<uuid>.<ext>` references resolve dynamically to `https://${R2_PUBLIC_BASE_URL}/hotels/<uuid>.<ext>`.
    - Reference deletion: Verifies `DeleteObjectCommand` strips `r2:` prefix and handles nonexistent objects gracefully without throwing.
    - Local adapter regression: Verifies legacy `/uploads/hotels/<filename>` resolution, directory traversal protection (`..`), protected file guards (`.gitkeep`), and safe ENOENT tolerance.
@@ -65,7 +66,7 @@ Communicates over HTTP to an isolated Express test instance on port 5001 connect
 > [!NOTE]
 > Object storage operations in integration tests are tested using an injectable mock S3 client (`s3ClientMock`), while all database transactions execute against live PostgreSQL 18.6. This verifies upload orchestration, compensating deletes, and database rollbacks end-to-end without requiring cloud accounts or network latency.
 
-### Test Breakdown (62 tests):
+### Test Breakdown (63 tests):
 - **Part 1 (POST):** Valid creation with/without JPEG and PNG, validation errors, magic bytes spoofing, 5 MB limit, and upload file cleanup on failure.
 - **Part 2 (GET List):** Retrieval of collection, prefix search (`lower(title) LIKE lower($1) || '%'`), price range filters, pagination slices, and parameter validation.
 - **Part 3 (GET Detail):** Retrieval of existing record, 404 on nonexistent record, 400 on non-integer, zero, and negative IDs.
@@ -81,7 +82,7 @@ Communicates over HTTP to an isolated Express test instance on port 5001 connect
   - Verifies CORS preflight `OPTIONS` requests respond with HTTP 204 and cached max age.
   - Verifies JSON body size cap rejects payloads exceeding 10 KB with HTTP 413.
   - Verifies health probes (`/api/health` and `/api/ready`) bypass rate limiting.
-- **Part 10 (Cloudflare R2 Storage & Resilience Scenarios - Phase 5D, Tests 53–62):**
+- **Part 10 (Cloudflare R2 Storage & Resilience Scenarios - Phases 5D & 5D.1, Tests 53–63):**
   - Test 53: Create hotel with image using R2 storage driver (verifies S3 PutObject called with verified MIME, CacheControl header, database stores `r2:` reference, API returns public CDN URL).
   - Test 54: Create hotel without image using R2 storage driver (preserves null `image_path`).
   - Test 55: Update hotel with replacement image (uploads new image, updates database, deletes old R2 object from bucket).
@@ -92,6 +93,7 @@ Communicates over HTTP to an isolated Express test instance on port 5001 connect
   - Test 60: Database update failure during image replacement (compensating delete of new R2 object, leaves existing database reference and old R2 object untouched).
   - Test 61: R2 deletion failure tolerance on hotel deletion (database deletion succeeds, logs orphan warning, returns HTTP 200 without rollback).
   - Test 62: Legacy local image reference compatibility (retrieval and updates correctly resolve and delete legacy `/uploads/hotels/...` references alongside R2).
+  - Test 63: Database connection acquisition failure during update (compensating delete of newly uploaded R2 object when `db.pool.connect()` fails, safely bypassing rollback/release on unacquired client).
 
 ---
 
@@ -205,7 +207,7 @@ Built using **Vitest** + **React Testing Library** + **@testing-library/jest-dom
 
 ## 5. Running the Tests
 
-### Backend Tests (187 tests):
+### Backend Tests (201 tests):
 From the `server` directory:
 ```powershell
 # Run all backend tests (Unit tests + Integration tests)
@@ -229,10 +231,10 @@ npm run test:watch
 ```
 
 ### Total Test Suite Count:
-- **Backend Unit Tests:** 125 passed
-- **Backend Integration Tests:** 62 passed
+- **Backend Unit Tests:** 138 passed
+- **Backend Integration Tests:** 63 passed
 - **Frontend Unit Tests:** 102 passed
-- **Total Automated Tests:** **289 / 289 passed (100% pass rate)**
+- **Total Automated Tests:** **303 / 303 passed (100% pass rate)**
 
 ---
 

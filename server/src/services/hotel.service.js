@@ -210,9 +210,10 @@ const updateHotel = async (id, hotelData, imageFile) => {
     newStorageRef = uploadResult.storageReference;
   }
 
-  const client = await db.pool.connect();
+  let client = null;
 
   try {
+    client = await db.pool.connect();
     await client.query('BEGIN');
 
     // 2. Lock existing record for update to prevent concurrent race conditions
@@ -266,8 +267,10 @@ const updateHotel = async (id, hotelData, imageFile) => {
 
     return formatHotelResponse(updatedHotel);
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    // If update fails, clean up the newly uploaded image immediately
+    if (client) {
+      await client.query('ROLLBACK').catch(() => {});
+    }
+    // If update fails (including pool.connect() rejection), clean up the newly uploaded image immediately
     if (newStorageRef) {
       await storage.delete(newStorageRef).catch(() => {});
     }
@@ -277,7 +280,9 @@ const updateHotel = async (id, hotelData, imageFile) => {
     // Existing image remains untouched in storage and in database
     throw err;
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
   }
 };
 

@@ -152,9 +152,9 @@ namlatic-hotel-portal/
 
 ## 5. Running Automated Tests
 
-The test suite includes **289 automated tests** across the entire full-stack architecture:
-- **Backend Unit Tests:** 125 passed (`node:test`)
-- **Backend Integration Tests:** 62 passed (HTTP + Live PostgreSQL 18.6)
+The test suite includes **303 automated tests** across the entire full-stack architecture:
+- **Backend Unit Tests:** 138 passed (`node:test`)
+- **Backend Integration Tests:** 63 passed (HTTP + Live PostgreSQL 18.6)
 - **Frontend Unit Tests:** 102 passed (Vitest + React Testing Library)
 
 ```powershell
@@ -207,6 +207,7 @@ npm test
 - [x] **Phase 5B: Backend Environment Configuration & PostgreSQL Cloud Connectivity** (`DATABASE_URL` parsing, fail-fast production defense, Neon TLS enforcement, SASL mechanism negotiation verification, shutdown idempotency, 225 automated tests passing)
 - [x] **Phase 5C: Express Backend Production Hardening for Render** (Binding to 0.0.0.0, Render `trust proxy: 1` IP anti-spoofing, strict CORS allowlist without wildcards, Helmet backend response security headers with cross-origin CORP for Leaflet/media, mutating write rate limiter, body size limits, production 500 error sanitization, 254 automated tests passing)
 - [x] **Phase 5D: Persistent Cloud Media Storage with Cloudflare R2** (Provider-neutral storage abstraction, Local and Cloudflare R2 adapters with AWS SDK v3, stable server-generated keys `hotels/<uuid>.<ext>`, unambiguous `r2:` references in PostgreSQL `image_path` TEXT column without schema migrations, dynamic CDN public URL resolution in API response layer, compensating rollback deletes on DB failure, safe asynchronous delete tolerance, 289 automated tests passing)
+- [x] **Phase 5D.1: Storage Failure-Path and Production Configuration Corrections** (Enforced `MEDIA_STORAGE_DRIVER=r2` in production while rejecting missing driver or `local`, added HTTPS/credential/query/fragment validation for `R2_PUBLIC_BASE_URL`, guaranteed staged-file cleanup on read failures, protected database connection acquisition failure path in `updateHotel` with compensating R2 delete, clarified local media migration requirement and test mock isolation, 303 automated tests passing)
 - [ ] **Phase 5E: Vercel Routing & Frontend Cloud Configuration** (Vercel configuration, SPA client-side routing fallback, production environment variables, dedicated frontend CSP and security headers)
 - [ ] **Phase 5F: Cloud Database & Service Deployment** (Neon PostgreSQL provisioning, Render Web Service deployment, database schema initialization)
 - [ ] **Phase 5G: Production End-to-End & Security Verification** (Live cloud verification, CORS validation, SSL audit, probe monitoring)
