@@ -40,8 +40,8 @@ This guide prepares you to defend every engineering decision in the Namlatic Hot
 ### Q6: What is the difference between your unit tests and integration tests?
 > **Answer:** "Our **backend unit tests** (138 tests) test individual functions in complete isolation with zero external dependencies. They verify input validation rules (coordinates, prices, titles, pagination boundaries, 64-bit BIGINT ranges, strict non-trimmed whitespace rejection, safe vs unsafe integer enforcement), binary magic byte detection, path traversal blocks, database error mapping, DATABASE_URL parsing and TLS/channel-binding policies (Phase 5B), dynamic port binding, CORS allowlist logic, reverse proxy anti-spoofing IP extraction, rate limit header formatting (Phase 5C), storage driver selection, production driver enforcement (rejecting missing driver or 'local' in production), Cloudflare R2 credential/endpoint validation, strict R2 public URL validation (requiring HTTPS in production, rejecting credentials, queries, and fragments), UUID-based object key generation, MIME detection from binary signatures, public CDN URL resolution, compensating deletes, staged-file cleanup on read failures, and missing object deletion tolerance (Phases 5D and 5D.1). They execute in ~800 ms using Node.js's native `node:test` runner.
 > Our **backend integration tests** (63 tests) test the entire system end-to-end: they launch an Express test server on an isolated port, issue HTTP fetch requests with multipart form data, write and delete files on disk, execute live queries against PostgreSQL 18.6, assert both database state and disk storage integrity, test health/ready probes, verify Helmet security headers, CORS origin enforcement, body size caps, probe rate limiter exemptions, and verify the complete Cloudflare R2 storage lifecycle (create with/without media, image replacement, deletion, upload failure rollback, compensating delete on DB failure, DB update failure rollback, compensating delete on pool.connect failure, R2 deletion tolerance, and legacy local image reference coexistence).
-> Our **frontend unit tests** (102 tests) run with Vitest and React Testing Library, testing UI components, form validation rules, image lifecycle cleanup, dynamic Leaflet map-center synchronization with primitive dependencies, route BIGINT safety without trimming, Redux slices, and mock API flows with 100% reliability.
-> Across the entire application, **303 automated tests** pass with a 100% pass rate."
+> Our **frontend unit tests** (113 tests) run with Vitest and React Testing Library, testing UI components, form validation rules, image lifecycle cleanup, dynamic Leaflet map-center synchronization with primitive dependencies, route BIGINT safety without trimming, Redux slices, mock API flows, and Vercel cloud configuration validation (`vercelConfig.test.js` - Phase 5E) with 100% reliability.
+> Across the entire application, **314 automated tests** pass with a 100% pass rate."
 
 ---
 
@@ -198,7 +198,7 @@ This guide prepares you to defend every engineering decision in the Namlatic Hot
 > 1. **Backend Response Scope:** Helmet headers emitted by the Express server protect only HTTP responses originating from the backend (API JSON data and uploaded static assets).
 > 2. **Decoupled Frontend Hosting:** The React Single Page Application (HTML, JS bundles, CSS) is served from Vercel's edge network, not Express. Browsers enforce CSP and security policies based on the headers attached to the initial HTML document request (`index.html`).
 > 3. **HSTS Scope:** HTTP Strict Transport Security enabled on the Render API domain (`api.namlatic...`) applies solely to API requests and does not protect the Vercel frontend domain (`portal.namlatic...`).
-> 4. **Phase 5E Requirement:** Dedicated frontend Content Security Policy, HSTS, frame protection, and referrer headers must be independently configured at the Vercel hosting layer (via `vercel.json` or edge middleware) in Phase 5E."
+> 4. **Phase 5E Implementation & Boundary:** Dedicated frontend baseline security headers (`X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, scoped `Strict-Transport-Security: max-age=31536000`, and restrictive `Permissions-Policy`) are configured at the Vercel hosting layer in `client/vercel.json`. However, Content Security Policy (CSP) enforcement on the frontend HTML document is intentionally deferred until Phase 5F/5G. This is because strict CSP directives require the exact, unprovisioned production hostnames for the Render API (`connect-src`) and Cloudflare R2 bucket CDN (`img-src`); enforcing a temporary wildcard policy (`img-src https:`) would introduce security weaknesses or false confidence."
 
 ---
 
@@ -270,3 +270,86 @@ This guide prepares you to defend every engineering decision in the Namlatic Hot
 > 3. **Seamless Reference Routing:** The `StorageService` router inspects reference prefixes during deletion. If an R2 deployment encounters a legacy hotel record referencing `/uploads/hotels/legacy.jpg`, the router delegates deletion to the local storage adapter rather than sending a malformed key to Cloudflare R2. This ensures flawless backward compatibility during phased migrations.
 > 4. **Migration Requirement:** Recognizing legacy local references does not automatically copy or migrate local image binaries to R2. Any legacy local files must be uploaded or repopulated prior to production cloud cutover.
 > 5. **Mocked Testing Assurance:** All automated tests run using an injectable mock S3 client; no live Cloudflare R2 bucket or account was provisioned."
+
+---
+
+### Q31: Why is an SPA route fallback rewrite necessary on Vercel, and how does it work?
+> **Answer:** "In a Single Page Application (SPA) with client-side routing (React Router v7), URL routing happens entirely inside the browser's JavaScript engine rather than via server file resolution:
+> 1. **The Refresh / Deep-Link Problem:**
+>    - When a user navigates to `/hotels/new` or `/hotels/42` from within the app, React Router intercepts the link click via the HTML5 History API (`pushState`) and renders the view without making a network request for a new HTML page.
+>    - However, if the user bookmarks that URL, shares it, or presses browser refresh (F5), the browser sends an HTTP `GET /hotels/42` directly to Vercel's edge network.
+>    - Because Vercel is a static host looking for a physical file at `/hotels/42` or `/hotels/42/index.html`, it cannot find any matching file on disk and responds with an HTTP 404 Not Found error.
+> 2. **The Vercel Rewrite Solution:**
+>    - In `client/vercel.json`, we configure an SPA fallback rewrite:
+>      ```json
+>      "rewrites": [
+>        {
+>          "source": "/(.*)",
+>          "destination": "/index.html"
+>        }
+>      ]
+>      ```
+> 3. **Static Asset Precedence:**
+>    - Crucially, Vercel evaluates physical static files matching the build output directory (`dist`) *before* applying rewrite rules.
+>    - Requests for static assets (`/assets/index-abc.js`, `/assets/index-xyz.css`, `/favicon.ico`) match existing files and are served directly with optimal MIME types and caching headers.
+>    - Any request that does not match a physical static asset falls back to serving `/index.html` with HTTP 200.
+>    - The browser downloads `index.html`, boots the React bundle, and React Router reads `window.location.pathname` to mount the appropriate component (`<HotelDetailsPage />`), delivering seamless navigation across deep links."
+
+---
+
+### Q32: Why do Vite environment variables need a `VITE_` prefix, and what are the security risks of build-time bundling?
+> **Answer:** "Vite processes environment variables under strict compile-time encapsulation rules:
+> 1. **The `VITE_` Prefix Convention:**
+>    - Vite inspects `.env` files and exposes only variables prefixed with `VITE_` to client source code via `import.meta.env.VITE_*`.
+>    - Any variable without this prefix (such as `PORT`, `DATABASE_URL`, or `SECRET_KEY`) is automatically ignored by Vite's client transformer, preventing accidental inclusion of server configuration in client assets.
+> 2. **Build-Time Inlining & Immutability:**
+>    - Unlike Node.js where `process.env` is read dynamically at runtime on every request, Vite performs static string replacement during the production build (`npm run build`).
+>    - `import.meta.env.VITE_API_URL` is statically replaced with the string literal configured at build time (e.g., `'https://api.namlatic.com/api'`).
+>    - As a result, changing an environment variable in the Vercel dashboard does not affect already-built static bundles until a new build and deployment are triggered.
+> 3. **Critical Security Boundary:**
+>    - Frontend assets are distributed publicly across the internet; any variable compiled into the client bundle is completely exposed to anyone inspecting DevTools, network payloads, or source maps.
+>    - Backend secrets (`DATABASE_URL`, Cloudflare R2 access keys, JWT private keys, master passwords) must **never** be prefixed with `VITE_` or added to client configuration files.
+> 4. **Authoritative Documentation:**
+>    - We created `client/.env.example` documenting all three authorized frontend variables (`VITE_API_URL`, `VITE_API_ORIGIN`, `VITE_APP_CURRENCY`), providing complete setup instructions while warning against preview deployments targeting unauthenticated write endpoints and strictly prohibiting backend secrets."
+
+---
+
+### Q33: How does the hosting boundary separate Express Helmet headers from Vercel edge security headers?
+> **Answer:** "In our decoupled cloud architecture, the application is divided across two distinct origins and hosting platforms:
+> 1. **The Hosting Boundary:**
+>    - **Render Backend:** An Express Node.js application serving dynamic JSON API endpoints and uploaded media.
+>    - **Vercel Frontend:** An edge CDN serving static HTML, JavaScript chunks, CSS, and favicon assets.
+> 2. **Browser Security Enforcement:**
+>    - Web browsers enforce document-level security policies based strictly on the HTTP response headers received when loading the top-level HTML document (`index.html`).
+>    - If Helmet configures `X-Frame-Options: DENY` on Express, that header protects the backend API responses (`/api/hotels`) from being embedded in an iframe. However, it provides **zero protection** to the React application on Vercel; if Vercel serves `index.html` without framing protection, an attacker can frame the entire hotel portal in an invisible iframe and execute clickjacking attacks.
+>    - Similarly, `Strict-Transport-Security` (HSTS) on the Render API hostname (`api.namlatic.com`) does not apply to the Vercel frontend hostname (`portal.namlatic.com`), and Express Content Security Policy does not govern scripts executed on the React web page.
+> 3. **Edge-Level Security Header Implementation:**
+>    - To provide true end-to-end security, we independently configured baseline HTTP security headers at the Vercel edge layer via `client/vercel.json`:
+>      - `X-Content-Type-Options: nosniff`: Prevents MIME-type sniffing attacks on static files.
+>      - `Referrer-Policy: strict-origin-when-cross-origin`: Restricts referrer data leakage on cross-origin outbound requests.
+>      - `X-Frame-Options: DENY`: Prevents UI redressing and clickjacking attacks across all framing origins.
+>      - `Strict-Transport-Security: max-age=31536000`: Enforces HTTPS for one full year without unverified `includeSubDomains` or `preload` flags.
+>      - `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()`: Explicitly blocks browser hardware and sensitive sensor access."
+
+---
+
+### Q34: What is the CSP strategy for this application, and why is CSP enforcement deferred until Phase 5F/5G?
+> **Answer:** "A Content Security Policy (CSP) is the browser's most powerful defense against Cross-Site Scripting (XSS) and data exfiltration. However, implementing CSP across decoupled cloud platforms requires careful architectural sequencing:
+> 1. **Application Requirements:**
+>    - A strict CSP for the Namlatic Hotel Portal must permit:
+>      - `default-src 'self'`
+>      - `script-src 'self'` (Vite bundled application logic)
+>      - `style-src 'self' 'unsafe-inline'` (Leaflet CSS and inline style injections)
+>      - `img-src 'self' data: blob:` + OpenStreetMap tiles (`https://tile.openstreetmap.org`) + Cloudflare R2 bucket domain
+>      - `connect-src 'self'` + Render Express API domain + OpenStreetMap tiles
+>      - `font-src 'self'`
+>      - `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors 'none'`
+> 2. **The Dependency Dilemma (Why Deferred):**
+>    - In Phase 5E, the application is prepared for deployment, but neither the Render web service nor the Cloudflare R2 storage bucket has been provisioned yet. Their real production hostnames (e.g., `https://namlatic-api.onrender.com` or custom domains) do not exist.
+>    - If we enforced CSP in `client/vercel.json` today, we would be forced into one of two anti-patterns:
+>      - **Insecure Wildcarding:** Specifying `img-src 'self' https:` or `connect-src 'self' https:`, which defeats the defensive guarantees of CSP and creates a false sense of security.
+>      - **Fragile Placeholders:** Specifying dummy domains that would break API connectivity or image loading during initial deployment smoke testing.
+> 3. **Defensible Phased Strategy:**
+>    - In Phase 5E, we implemented all non-origin-dependent baseline headers (`nosniff`, `strict-origin`, `DENY`, scoped `HSTS`, `Permissions-Policy`).
+>    - We authored and version-controlled the authoritative, directive-by-directive CSP template in `docs/ARCHITECTURE.md` (Section 9.4).
+>    - Actual CSP header activation is scheduled for Phase 5F/5G immediately after live backend and CDN domain allocation, ensuring strict, zero-wildcard origin lockdown."

@@ -604,3 +604,94 @@ Because external object storage and relational PostgreSQL cannot participate in 
 - **Connection Acquisition Safety in `updateHotel`:** In `updateHotel()`, database pool connection acquisition (`db.pool.connect()`) is positioned inside a cleanup-safe `try` block. If image upload succeeds but `pool.connect()` rejects (e.g. pool timeout or exhaustion), the catch block detects that no database client was acquired, avoids calling `ROLLBACK` or `release()`, and issues a compensating delete on the newly uploaded R2 object.
 - **Legacy Media Migration Requirement:** While the backend router transparently resolves legacy local references (`/uploads/hotels/...`) alongside R2 references, it does **not** automatically migrate physical image files from local disk to Cloudflare R2. Existing hotel media files must be migrated or re-uploaded prior to production cloud cutover.
 - **Testing & Isolation Guarantee:** All automated storage tests execute against an injectable mock S3 client (`s3ClientMock`) and a live local PostgreSQL 18.6 instance. No real Cloudflare R2 bucket, API credentials, or cloud accounts were provisioned.
+
+---
+
+## 9. Frontend Cloud Hosting & Vercel Configuration Architecture (Phase 5E)
+
+### 9.1 Vercel Project Root & Build Pipeline
+- **Project Root Directory:** The Vercel project is rooted in the `client` directory. This keeps the frontend build isolated from server dependencies and ensures `client/package.json` and `client/package-lock.json` govern client builds.
+- **Framework Preset:** Vite.
+- **Build Command:** `npm run build` (invokes `vite build`).
+- **Output Directory:** `dist` (configured in `client/vite.config.js`).
+- **Node.js Engine:** `>=22.0.0` aligned with `client/package.json` `engines.node`.
+- **Configuration File Location:** `client/vercel.json` (using official schema `https://openapi.vercel.sh/vercel.json`). No duplicate or conflicting configuration exists at the repository root.
+
+### 9.2 React SPA Client-Side Routing & Fallback Rewrite
+- **The Routing Challenge:** In a Single Page Application (SPA) with React Router, client-side routes (`/`, `/hotels`, `/hotels/new`, `/hotels/:id`, `/hotels/:id/edit`) exist solely within browser memory via the HTML5 History API. When a user navigates directly or refreshes the page at `/hotels/42`, a traditional static web server searches for a physical `/hotels/42/index.html` file on disk. Because that file does not exist, the server returns an HTTP 404 (Not Found) error.
+- **Vercel Rewrite Solution:**
+  ```json
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+  ```
+- **Static File Precedence:** On Vercel, physical static assets in the output directory (e.g. `/assets/index-*.js`, `/assets/index-*.css`, Leaflet marker images) take precedence over rewrite rules. When a request matches a physical file, Vercel serves it immediately. When no physical file matches, Vercel invokes the fallback rewrite, serving `/index.html` with HTTP 200, allowing React Router to hydrate and render the targeted view seamlessly.
+
+### 9.3 Frontend vs Backend Security Headers Boundary
+Security headers operate across two distinct hosting boundaries:
+1. **Backend Responses (Express / Render):** Helmet middleware on the Express server protects backend API responses (`/api/*`) and locally served media.
+2. **Frontend Document & Asset Responses (Vercel Edge):** Vercel edge configuration (`client/vercel.json`) attaches security headers to the initial HTML document request (`index.html`) and static assets.
+
+Configured Vercel Edge Headers:
+- **`X-Content-Type-Options: nosniff`:** Instructs browsers to strictly honor the declared MIME type, preventing MIME-confusion attacks.
+- **`Referrer-Policy: strict-origin-when-cross-origin`:** Sends the full referrer URL on same-origin requests, but strips the path component and transmits only the origin on cross-origin HTTPS requests.
+- **`X-Frame-Options: DENY`:** Completely prohibits embedding the application within iframes on any third-party domain, mitigating clickjacking attacks.
+- **`Strict-Transport-Security: max-age=31536000`:** Instructs browsers to communicate exclusively over HTTPS for one year (31,536,000 seconds). In accordance with defensive deployment practices, `includeSubDomains` and `preload` are omitted pending verified subdomain ownership and HTTPS coverage.
+- **`Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()`:** Explicitly disables unused browser hardware, geolocation, payment, and peripheral APIs.
+- **Obsolete Headers Omitted:** `X-XSS-Protection` is omitted as modern browsers have deprecated it and it introduces client-side vulnerabilities.
+
+### 9.4 Content Security Policy (CSP) Analysis & Policy Template
+The frontend application requires specific external resource connections:
+- **`default-src 'self'`:** Restricts all unspecified resource types to same origin.
+- **`script-src 'self'`:** Restricts JavaScript execution to bundled assets created by Vite. No external scripts or unbundled CDN libraries are loaded.
+- **`style-src 'self' 'unsafe-inline'`:** Allows bundled stylesheets; `'unsafe-inline'` is strictly required because Leaflet dynamically injects inline styles for map pane translations and marker positioning.
+- **`img-src 'self' data: blob: https://tile.openstreetmap.org <RENDER_API_ORIGIN> <R2_PUBLIC_BASE_URL>`:**
+  - `'self'`: Bundled local images and Leaflet retina marker icons.
+  - `data:`: Base64 data URIs used for fallback SVG icons.
+  - `blob:`: Temporary image preview blob URLs generated by `URL.createObjectURL(file)` in `HotelForm.jsx`.
+  - `https://tile.openstreetmap.org`: OpenStreetMap raster map tiles consumed by `HotelLocationMap.jsx`.
+  - `<RENDER_API_ORIGIN>`: Backend host (e.g. `https://<service-name>.onrender.com`) for legacy local media fallback.
+  - `<R2_PUBLIC_BASE_URL>`: Cloudflare R2 bucket public CDN hostname for uploaded property media.
+- **`connect-src 'self' <RENDER_API_ORIGIN>`:** Allows `fetch()` requests to the Express backend API.
+- **`font-src 'self'`:** Restricts fonts to local self-hosted fonts.
+- **`object-src 'none'`:** Completely blocks Flash, Java, and other legacy plugin objects.
+- **`base-uri 'self'`:** Prevents malicious `<base>` tag injection.
+- **`frame-ancestors 'none'`:** Blocks framing in all contexts (aligns with `X-Frame-Options: DENY`).
+- **`form-action 'self'`:** Prevents form action redirects.
+
+#### Production CSP Policy Template
+```text
+default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org https://<RENDER_API_HOST> https://<R2_PUBLIC_BASE_HOST>; connect-src 'self' https://<RENDER_API_HOST>; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self';
+```
+
+> [!IMPORTANT]
+> **CSP Cloud Origin Dependency Notice:**
+> The actual Render API hostname and Cloudflare R2 public base URL have not been provisioned yet. To avoid using broad insecure wildcards (such as `img-src https:`) or breaking legitimate API/media traffic with placeholder domains, full CSP header enforcement in `client/vercel.json` is marked as **pending Phase 5F/5G cloud provisioning**. Once live endpoints are established, the exact hostnames will be substituted into the header definition.
+
+### 9.5 Frontend Environment Variables & Build-Time Bundling
+- **Build-Time Inlining:** Vite evaluates `import.meta.env` at build time (`npm run build`) and statically replaces references with string literals in the bundled JavaScript.
+- **Public Visibility:** All variables prefixed with `VITE_` are publicly visible to anyone inspecting browser network traffic or client bundles.
+- **Variables Consumed by Frontend:**
+  - `VITE_API_URL`: Fully-qualified REST API base URL (e.g. `https://<service-name>.onrender.com/api`).
+  - `VITE_API_ORIGIN`: Protocol and hostname of the Express backend without path (e.g. `https://<service-name>.onrender.com`).
+  - `VITE_APP_CURRENCY`: Optional ISO 4217 currency code (e.g. `USD`). Defaults to currency-neutral numbers if unset.
+- **Secrets Prohibition:** Backend secrets (`DATABASE_URL`, PostgreSQL credentials, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, JWT keys) must **never** be prefixed with `VITE_` or placed in frontend configuration.
+- **Preview Deployment Warning:** Vercel Preview deployments should NOT point to production databases or backends while mutating write routes remain unauthenticated.
+
+### 9.6 Deployment Dependencies & Manual Vercel Setup Steps
+When deploying to Vercel in future phases:
+1. Log into the Vercel dashboard and select **Add New Project**.
+2. Import the GitHub repository: `https://github.com/elango-project/Namlatic-Hotel`.
+3. In the project configuration screen:
+   - **Framework Preset:** Select `Vite`.
+   - **Root Directory:** Set to `client`.
+   - **Build & Output Settings:** Leave default (`npm run build`, `dist`).
+4. In **Environment Variables**:
+   - Add `VITE_API_URL`: `https://<your-render-service>.onrender.com/api`
+   - Add `VITE_API_ORIGIN`: `https://<your-render-service>.onrender.com`
+   - (Optional) Add `VITE_APP_CURRENCY`: e.g. `USD`
+5. Click **Deploy**. Vercel will build from `client/` and deploy the static bundle to the global edge network.
+6. Verify SPA routing by refreshing on `/hotels/new` or `/hotels/:id`.

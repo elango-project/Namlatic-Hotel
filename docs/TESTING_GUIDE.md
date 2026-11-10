@@ -202,6 +202,18 @@ Built using **Vitest** + **React Testing Library** + **@testing-library/jest-dom
    - Navigation links: "Edit Hotel" links to `/hotels/:id/edit` and "Back to My Hotels" links to `/hotels`.
    - Dynamic navigation: Handles route ID change without page reload (`/hotels/71` to `/hotels/72`), updating map props.
    - Cleanup on unmount: Dispatches `clearCurrentHotel()` and aborts active promise when unmounting.
+10. **`vercelConfig.test.js` (11 tests - Phase 5E):**
+   - Schema validation: Validates `client/vercel.json` against official `$schema` (`https://openapi.vercel.sh/vercel.json`).
+   - SPA rewrite source: Verifies rewrite source pattern captures all routes (`/(.*)`).
+   - SPA rewrite destination: Verifies rewrite destination routes to root `/index.html`.
+   - Static asset preservation: Verifies that physical static build assets (`/assets/*`, `/favicon.ico`) are served directly by Vercel before the SPA rewrite fallback fires.
+   - Baseline security headers: Verifies mandatory security headers (`X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, `Permissions-Policy`).
+   - Permissions-Policy restriction: Confirms restrictive permissions policy disabling camera, microphone, geolocation, payment, and usb APIs.
+   - HSTS header scoping: Verifies `Strict-Transport-Security` enforces `max-age=31536000` without unverified `includeSubDomains` or `preload` flags.
+   - Obsolete header avoidance: Confirms deprecated and counter-productive headers like `X-XSS-Protection` are strictly omitted.
+   - Environment documentation completeness: Verifies `client/.env.example` documents all required frontend variables (`VITE_API_URL`, `VITE_API_ORIGIN`, `VITE_APP_CURRENCY`).
+   - Build-time secret exclusion: Asserts `client/.env.example` warns about Vite build-time client bundling and strictly forbids backend secrets (`DATABASE_URL`, R2 keys, passwords).
+   - Deployment artifact safety: Confirms root directory has no duplicate `vercel.json` and `.gitignore` includes the `.vercel` build cache directory.
 
 ---
 
@@ -220,7 +232,7 @@ npm run test:unit
 npm run test:integration
 ```
 
-### Frontend Tests (102 tests):
+### Frontend Tests (113 tests):
 From the `client` directory:
 ```powershell
 # Run all frontend unit tests with Vitest
@@ -233,8 +245,8 @@ npm run test:watch
 ### Total Test Suite Count:
 - **Backend Unit Tests:** 138 passed
 - **Backend Integration Tests:** 63 passed
-- **Frontend Unit Tests:** 102 passed
-- **Total Automated Tests:** **303 / 303 passed (100% pass rate)**
+- **Frontend Unit Tests:** 113 passed
+- **Total Automated Tests:** **314 / 314 passed (100% pass rate)**
 
 ---
 

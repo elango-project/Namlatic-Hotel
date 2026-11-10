@@ -35,3 +35,6 @@ server/src/uploads/hotels/*
 
 # Coverage
 coverage/
+
+# Vercel deployment artifacts & CLI local state
+.vercel/
