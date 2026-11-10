@@ -5,8 +5,8 @@
 
 /**
  * Resolves and validates API client configuration from environment variables.
- * Enforces HTTPS and absolute URLs in production while preserving localhost fallbacks
- * for development and test environments.
+ * In production, VITE_API_URL is strictly required and must be a valid, absolute HTTPS URL
+ * free of credentials, query parameters, and fragments, ending with the documented '/api' path.
  *
  * @param {object} [env=import.meta.env] - Environment variables object
  * @returns {{ API_BASE_URL: string, API_ORIGIN: string }}
@@ -17,27 +17,60 @@ export function resolveApiConfig(env = import.meta.env) {
   const hasLegacyUrl = typeof env?.VITE_API_BASE_URL === 'string' && env.VITE_API_BASE_URL.trim().length > 0;
   const hasOrigin = typeof env?.VITE_API_ORIGIN === 'string' && env.VITE_API_ORIGIN.trim().length > 0;
 
-  const activeVarName = hasApiUrl ? 'VITE_API_URL' : (hasLegacyUrl ? 'VITE_API_BASE_URL' : 'VITE_API_URL');
-  const rawApiUrl = hasApiUrl ? env.VITE_API_URL : (hasLegacyUrl ? env.VITE_API_BASE_URL : undefined);
+  let rawApiUrl;
+  let activeVarName;
+
+  if (isProd) {
+    // Production strictly requires VITE_API_URL; legacy VITE_API_BASE_URL is rejected
+    if (!hasApiUrl) {
+      throw new Error('VITE_API_URL is required in production environment.');
+    }
+    rawApiUrl = env.VITE_API_URL.trim();
+    activeVarName = 'VITE_API_URL';
+  } else {
+    // Development and test environments support VITE_API_URL, legacy VITE_API_BASE_URL, or localhost default
+    if (hasApiUrl) {
+      rawApiUrl = env.VITE_API_URL.trim();
+      activeVarName = 'VITE_API_URL';
+    } else if (hasLegacyUrl) {
+      rawApiUrl = env.VITE_API_BASE_URL.trim();
+      activeVarName = 'VITE_API_BASE_URL';
+    }
+  }
 
   let apiUrl;
 
   if (!rawApiUrl) {
-    if (isProd) {
-      throw new Error('VITE_API_URL is required in production environment.');
-    }
     apiUrl = 'http://localhost:5000/api';
   } else {
-    const trimmedUrl = rawApiUrl.trim();
     let parsedUrl;
     try {
-      parsedUrl = new URL(trimmedUrl);
+      parsedUrl = new URL(rawApiUrl);
     } catch {
       throw new Error(`${activeVarName} must be a valid, absolute URL.`);
     }
 
-    if (isProd && parsedUrl.protocol !== 'https:') {
-      throw new Error(`${activeVarName} must use the HTTPS protocol in production.`);
+    if (parsedUrl.username || parsedUrl.password) {
+      throw new Error(`${activeVarName} must not contain embedded credentials.`);
+    }
+
+    if (parsedUrl.search) {
+      throw new Error(`${activeVarName} must not contain query parameters.`);
+    }
+
+    if (parsedUrl.hash) {
+      throw new Error(`${activeVarName} must not contain URL fragments.`);
+    }
+
+    if (isProd) {
+      if (parsedUrl.protocol !== 'https:') {
+        throw new Error(`${activeVarName} must use the HTTPS protocol in production.`);
+      }
+
+      const hostname = parsedUrl.hostname.toLowerCase();
+      if (!hostname || hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+        throw new Error(`${activeVarName} must not point to localhost in production.`);
+      }
     }
 
     const cleanPath = parsedUrl.pathname.replace(/\/+$/, '');
@@ -58,8 +91,23 @@ export function resolveApiConfig(env = import.meta.env) {
       throw new Error('VITE_API_ORIGIN must be a valid, absolute URL.');
     }
 
-    if (isProd && parsedOrigin.protocol !== 'https:') {
-      throw new Error('VITE_API_ORIGIN must use the HTTPS protocol in production.');
+    if (parsedOrigin.username || parsedOrigin.password) {
+      throw new Error('VITE_API_ORIGIN must not contain embedded credentials.');
+    }
+
+    if (parsedOrigin.search || parsedOrigin.hash) {
+      throw new Error('VITE_API_ORIGIN must not contain query parameters or fragments.');
+    }
+
+    if (isProd) {
+      if (parsedOrigin.protocol !== 'https:') {
+        throw new Error('VITE_API_ORIGIN must use the HTTPS protocol in production.');
+      }
+
+      const originHost = parsedOrigin.hostname.toLowerCase();
+      if (!originHost || originHost === 'localhost' || originHost === '127.0.0.1' || originHost === '::1') {
+        throw new Error('VITE_API_ORIGIN must not point to localhost in production.');
+      }
     }
 
     origin = parsedOrigin.origin;
@@ -78,25 +126,41 @@ export const { API_BASE_URL, API_ORIGIN } = resolveApiConfig();
 
 /**
  * Resolves relative image paths (e.g. /uploads/hotels/uuid.jpg) to fully qualified URLs.
- * Preserves absolute HTTPS, HTTP, data, and blob URLs (including Cloudflare R2 URLs) without rewriting.
+ * Preserves absolute HTTPS, data, and blob URLs (including Cloudflare R2 URLs) without rewriting.
+ * In production, rejects unencrypted HTTP URLs to prevent mixed-content security violations.
+ * In development, permits HTTP URLs for local testing.
  * Does not append /api to media URLs.
- * Returns null if no image is present.
+ * Returns null if no image is present or if an insecure HTTP URL is supplied in production.
  *
  * @param {string|null} imagePath
  * @param {string} [origin=API_ORIGIN]
+ * @param {object|boolean} [env=import.meta.env] - Environment configuration or boolean isProd
  * @returns {string|null}
  */
-export const getImageUrl = (imagePath, origin = API_ORIGIN) => {
+export const getImageUrl = (imagePath, origin = API_ORIGIN, env = import.meta.env) => {
   if (!imagePath || typeof imagePath !== 'string' || !imagePath.trim()) return null;
   const trimmed = imagePath.trim();
+
+  const isProd = typeof env === 'boolean'
+    ? env
+    : (env?.isProd ?? (env?.PROD === true || env?.MODE === 'production'));
+
   if (
-    trimmed.startsWith('http://') ||
     trimmed.startsWith('https://') ||
     trimmed.startsWith('data:') ||
     trimmed.startsWith('blob:')
   ) {
     return trimmed;
   }
+
+  if (trimmed.startsWith('http://')) {
+    if (isProd) {
+      // In production, reject unencrypted HTTP image URLs to prevent mixed content
+      return null;
+    }
+    return trimmed;
+  }
+
   const cleanOrigin = (origin || '').replace(/\/+$/, '');
   const cleanPath = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
   return `${cleanOrigin}${cleanPath}`;

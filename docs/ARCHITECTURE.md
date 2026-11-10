@@ -674,10 +674,18 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 ### 9.5 Frontend Environment Variables & Build-Time Bundling
 - **Build-Time Inlining:** Vite evaluates `import.meta.env` at build time (`npm run build`) and statically replaces references with string literals in the bundled JavaScript.
 - **Public Visibility:** All variables prefixed with `VITE_` are publicly visible to anyone inspecting browser network traffic or client bundles.
-- **Production Validation (Phase 5E.1):** In production environments (`NODE_ENV=production` or `PROD=true`), the client service layer validates that `VITE_API_URL` is configured, absolute, utilizes the HTTPS protocol, and preserves the documented `/api` path convention. Unauthenticated localhost fallbacks are restricted to development and test modes.
+- **Production Validation (Phases 5E.1 & 5E.2):** In production environments (`NODE_ENV=production` or `PROD=true`), the client service layer strictly requires `VITE_API_URL` and rejects legacy fallback to `VITE_API_BASE_URL`. The URL is validated to ensure:
+  - Absolute HTTPS protocol (rejecting HTTP).
+  - Documented `/api` path convention suffix.
+  - Zero embedded credentials (rejecting `user:pass@`).
+  - Zero query parameters (rejecting `?key=val`).
+  - Zero URL fragments (rejecting `#hash`).
+  - Non-localhost hostname (rejecting `localhost`, `127.0.0.1`, `::1`).
+  Unauthenticated localhost fallbacks and legacy `VITE_API_BASE_URL` compatibility are strictly restricted to development and test modes.
+- **Safe Media URL Handling (`getImageUrl`):** In production, `getImageUrl()` strictly rejects unencrypted `http://` URLs (returning `null`) to eliminate mixed-content security warnings on HTTPS deployments. Valid HTTPS URLs, Cloudflare R2 CDN links, SVG `data:` fallbacks, and preview `blob:` URLs are preserved directly without modification, while relative legacy paths resolve against `API_ORIGIN` without appending `/api`.
 - **Variables Consumed by Frontend:**
-  - `VITE_API_URL`: Fully-qualified REST API base URL (e.g. `https://<service-name>.onrender.com/api`). Required and enforced as HTTPS in production.
-  - `VITE_API_ORIGIN`: Protocol and hostname of the Express backend without path (e.g. `https://<service-name>.onrender.com`). Optional in Phase 5E.1: automatically derived from `VITE_API_URL` when omitted; validated as HTTPS in production when explicitly supplied.
+  - `VITE_API_URL`: Fully-qualified REST API base URL (e.g. `https://<service-name>.onrender.com/api`). Strictly required and enforced as HTTPS in production; only supported production API variable.
+  - `VITE_API_ORIGIN`: Protocol and hostname of the Express backend without path (e.g. `https://<service-name>.onrender.com`). Optional: automatically derived from `VITE_API_URL` when omitted; validated as HTTPS in production when explicitly supplied.
   - `VITE_APP_CURRENCY`: Optional ISO 4217 currency code (e.g. `USD`). Defaults to currency-neutral numbers if unset.
 - **Secrets Prohibition:** Backend secrets (`DATABASE_URL`, PostgreSQL credentials, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, JWT keys) must **never** be prefixed with `VITE_` or placed in frontend configuration.
 - **Preview Deployment Warning:** Vercel Preview deployments should NOT point to production databases or backends while mutating write routes remain unauthenticated.

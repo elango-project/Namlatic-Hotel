@@ -40,8 +40,8 @@ This guide prepares you to defend every engineering decision in the Namlatic Hot
 ### Q6: What is the difference between your unit tests and integration tests?
 > **Answer:** "Our **backend unit tests** (138 tests) test individual functions in complete isolation with zero external dependencies. They verify input validation rules (coordinates, prices, titles, pagination boundaries, 64-bit BIGINT ranges, strict non-trimmed whitespace rejection, safe vs unsafe integer enforcement), binary magic byte detection, path traversal blocks, database error mapping, DATABASE_URL parsing and TLS/channel-binding policies (Phase 5B), dynamic port binding, CORS allowlist logic, reverse proxy anti-spoofing IP extraction, rate limit header formatting (Phase 5C), storage driver selection, production driver enforcement (rejecting missing driver or 'local' in production), Cloudflare R2 credential/endpoint validation, strict R2 public URL validation (requiring HTTPS in production, rejecting credentials, queries, and fragments), UUID-based object key generation, MIME detection from binary signatures, public CDN URL resolution, compensating deletes, staged-file cleanup on read failures, and missing object deletion tolerance (Phases 5D and 5D.1). They execute in ~800 ms using Node.js's native `node:test` runner.
 > Our **backend integration tests** (63 tests) test the entire system end-to-end: they launch an Express test server on an isolated port, issue HTTP fetch requests with multipart form data, write and delete files on disk, execute live queries against PostgreSQL 18.6, assert both database state and disk storage integrity, test health/ready probes, verify Helmet security headers, CORS origin enforcement, body size caps, probe rate limiter exemptions, and verify the complete Cloudflare R2 storage lifecycle (create with/without media, image replacement, deletion, upload failure rollback, compensating delete on DB failure, DB update failure rollback, compensating delete on pool.connect failure, R2 deletion tolerance, and legacy local image reference coexistence).
-> Our **frontend unit tests** (130 tests) run with Vitest and React Testing Library, testing UI components, form validation rules, image lifecycle cleanup, dynamic Leaflet map-center synchronization with primitive dependencies, route BIGINT safety without trimming, Redux slices, mock API flows, Vercel cloud configuration validation (`vercelConfig.test.js` - Phase 5E), and production API environment & URL resolution validation (`apiEnv.test.js` - Phase 5E.1) with 100% reliability.
-> Across the entire application, **331 automated tests** pass with a 100% pass rate."
+> Our **frontend unit tests** (139 tests) run with Vitest and React Testing Library, testing UI components, form validation rules, image lifecycle cleanup, dynamic Leaflet map-center synchronization with primitive dependencies, route BIGINT safety without trimming, Redux slices, mock API flows, Vercel cloud configuration validation (`vercelConfig.test.js` - Phase 5E), and production API environment & media URL safety validation (`apiEnv.test.js` - Phases 5E.1 & 5E.2) with 100% reliability.
+> Across the entire application, **340 automated tests** pass with a 100% pass rate."
 
 ---
 
@@ -356,17 +356,23 @@ This guide prepares you to defend every engineering decision in the Namlatic Hot
 
 ---
 
-### Q35: How does the frontend validate production environment variables, and why derive API origin rather than requiring duplicate configuration?
-> **Answer:** "In Phase 5E.1, we hardened frontend configuration handling in `client/src/services/api.js`:
-> 1. **Fail-Fast Production Validation (`resolveApiConfig`):**
->    - In development and test environments (`MODE !== 'production'`), the client safely falls back to local development defaults (`http://localhost:5000/api` and origin `http://localhost:5000`).
->    - In production (`PROD === true` or `MODE === 'production'`), `VITE_API_URL` is strictly required. Omitting it, supplying whitespace, relative paths (`/api`), malformed URLs, or unencrypted HTTP (`http://...`) immediately throws a clear, descriptive startup error.
+### Q35: How does the frontend validate production environment variables, and how does it ensure media URL safety?
+> **Answer:** "In Phases 5E.1 and 5E.2, we hardened frontend configuration and media URL resolution in `client/src/services/api.js`:
+> 1. **Mandatory Production API URL (`VITE_API_URL`):**
+>    - In production (`PROD === true` or `MODE === 'production'`), `VITE_API_URL` is **strictly mandatory**.
+>    - Production strictly rejects legacy fallback to `VITE_API_BASE_URL` to ensure unambiguous production configuration.
+>    - Omitting `VITE_API_URL`, supplying whitespace, relative paths (`/api`), malformed URLs, or unencrypted HTTP (`http://...`) immediately throws a clear, descriptive startup error without leaking input values.
 >    - Production URLs must strictly adhere to the documented `/api` path convention (e.g. `https://api.namlatic.com/api`).
->    - Backward compatibility for legacy `VITE_API_BASE_URL` is preserved only when valid HTTPS; it cannot bypass production security checks.
-> 2. **Deduplicating Configuration via Origin Derivation:**
+>    - Production URLs must not contain embedded credentials (`user:pass@`), query parameters (`?debug=true`), URL fragments (`#hash`), or point to localhost/loopback (`localhost`, `127.0.0.1`, `::1`).
+> 2. **Development Environment Flexibility:**
+>    - In development and test environments (`MODE !== 'production'`), the client safely falls back to local development defaults (`http://localhost:5000/api` and origin `http://localhost:5000`).
+>    - Development retains legacy `VITE_API_BASE_URL` compatibility when `VITE_API_URL` is unset.
+> 3. **Deduplicating Configuration via Origin Derivation:**
 >    - Previously, operators had to configure two redundant variables: `VITE_API_URL` (ending in `/api`) and `VITE_API_ORIGIN` (root hostname without `/api`).
->    - Phase 5E.1 automatically derives `API_ORIGIN` directly from `new URL(apiUrl).origin`, stripping the `/api` path while retaining protocol, host, and port.
->    - An explicit `VITE_API_ORIGIN` can still be provided to override the origin (e.g., custom media proxies), but in production, explicit overrides are also strictly validated as valid HTTPS URLs.
-> 3. **Clean Media URL Handling (`getImageUrl`):**
->    - Legacy relative paths (`/uploads/hotels/photo.jpg`) are resolved against `API_ORIGIN` without appending `/api`.
->    - Absolute HTTPS URLs and Cloudflare R2 public CDN URLs (`https://pub-*.r2.dev/hotels/...`) are preserved without rewriting."
+>    - The application automatically derives `API_ORIGIN` directly from `new URL(apiUrl).origin`, stripping the `/api` path while retaining protocol, host, and port.
+>    - An explicit `VITE_API_ORIGIN` can still be provided to override the origin (e.g., custom media proxies), but in production, explicit overrides are also strictly validated as valid HTTPS URLs free of credentials, queries, fragments, or localhost.
+> 4. **Safe Media URL Handling (`getImageUrl`):**
+>    - **Mixed-Content Defense:** In production, `getImageUrl()` strictly rejects unencrypted `http://` URLs (returning `null`) rather than passing them through, preventing browser mixed-content security blocks on HTTPS deployments.
+>    - In development, HTTP image URLs remain supported for local testing.
+>    - Absolute HTTPS URLs, Cloudflare R2 public CDN URLs (`https://pub-*.r2.dev/hotels/...`), SVG fallback `data:` URIs, and preview `blob:` URIs are preserved without rewriting.
+>    - Legacy relative paths (`/uploads/hotels/photo.jpg`) are resolved against `API_ORIGIN` without appending `/api`."
