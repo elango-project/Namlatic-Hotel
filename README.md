@@ -152,10 +152,10 @@ namlatic-hotel-portal/
 
 ## 5. Running Automated Tests
 
-The test suite includes **314 automated tests** across the entire full-stack architecture:
+The test suite includes **331 automated tests** across the entire full-stack architecture:
 - **Backend Unit Tests:** 138 passed (`node:test`)
 - **Backend Integration Tests:** 63 passed (HTTP + Live PostgreSQL 18.6)
-- **Frontend Unit Tests:** 113 passed (Vitest + React Testing Library)
+- **Frontend Unit Tests:** 130 passed (Vitest + React Testing Library)
 
 ```powershell
 # 1. Run all backend tests (server directory)
@@ -209,6 +209,7 @@ npm test
 - [x] **Phase 5D: Persistent Cloud Media Storage with Cloudflare R2** (Provider-neutral storage abstraction, Local and Cloudflare R2 adapters with AWS SDK v3, stable server-generated keys `hotels/<uuid>.<ext>`, unambiguous `r2:` references in PostgreSQL `image_path` TEXT column without schema migrations, dynamic CDN public URL resolution in API response layer, compensating rollback deletes on DB failure, safe asynchronous delete tolerance, 289 automated tests passing)
 - [x] **Phase 5D.1: Storage Failure-Path and Production Configuration Corrections** (Enforced `MEDIA_STORAGE_DRIVER=r2` in production while rejecting missing driver or `local`, added HTTPS/credential/query/fragment validation for `R2_PUBLIC_BASE_URL`, best-effort staged-file cleanup on read failures, protected database connection acquisition failure path in `updateHotel` with compensating R2 delete, clarified local media migration requirement and test mock isolation, 303 automated tests passing)
 - [x] **Phase 5E: Vercel Routing & Frontend Cloud Configuration** (Vercel project root `client/vercel.json` with official schema, Vite SPA fallback rewrite `/(.*) -> /index.html` supporting deep link refresh, baseline security headers `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, `Strict-Transport-Security: max-age=31536000`, `Permissions-Policy`, CSP compatibility analysis for OpenStreetMap/Leaflet/preview blobs with production template, authoritative `client/.env.example` with secrets exclusion, automated validation tests, 314 automated tests passing)
+- [x] **Phase 5E.1: Frontend Production Environment Validation** (Strict production `VITE_API_URL` validation enforcing HTTPS and `/api` path convention, automatic origin derivation reducing duplicate configuration, HTTPS production origin validation, media URL preservation without appending `/api`, CSP architecture documentation corrections omitting OpenStreetMap from `connect-src`, 331 automated tests passing)
 - [ ] **Phase 5F: Cloud Database & Service Deployment** (Neon PostgreSQL provisioning, Render Web Service deployment, database schema initialization)
 - [ ] **Phase 5G: Production End-to-End & Security Verification** (Live cloud verification, CORS validation, SSL audit, probe monitoring)
 

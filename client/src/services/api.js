@@ -3,22 +3,103 @@
  * Wraps native fetch() with environment-driven base URLs and query serialization.
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
-export const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || 'http://localhost:5000';
+/**
+ * Resolves and validates API client configuration from environment variables.
+ * Enforces HTTPS and absolute URLs in production while preserving localhost fallbacks
+ * for development and test environments.
+ *
+ * @param {object} [env=import.meta.env] - Environment variables object
+ * @returns {{ API_BASE_URL: string, API_ORIGIN: string }}
+ */
+export function resolveApiConfig(env = import.meta.env) {
+  const isProd = env?.PROD === true || env?.MODE === 'production';
+  const hasApiUrl = typeof env?.VITE_API_URL === 'string' && env.VITE_API_URL.trim().length > 0;
+  const hasLegacyUrl = typeof env?.VITE_API_BASE_URL === 'string' && env.VITE_API_BASE_URL.trim().length > 0;
+  const hasOrigin = typeof env?.VITE_API_ORIGIN === 'string' && env.VITE_API_ORIGIN.trim().length > 0;
+
+  const activeVarName = hasApiUrl ? 'VITE_API_URL' : (hasLegacyUrl ? 'VITE_API_BASE_URL' : 'VITE_API_URL');
+  const rawApiUrl = hasApiUrl ? env.VITE_API_URL : (hasLegacyUrl ? env.VITE_API_BASE_URL : undefined);
+
+  let apiUrl;
+
+  if (!rawApiUrl) {
+    if (isProd) {
+      throw new Error('VITE_API_URL is required in production environment.');
+    }
+    apiUrl = 'http://localhost:5000/api';
+  } else {
+    const trimmedUrl = rawApiUrl.trim();
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(trimmedUrl);
+    } catch {
+      throw new Error(`${activeVarName} must be a valid, absolute URL.`);
+    }
+
+    if (isProd && parsedUrl.protocol !== 'https:') {
+      throw new Error(`${activeVarName} must use the HTTPS protocol in production.`);
+    }
+
+    const cleanPath = parsedUrl.pathname.replace(/\/+$/, '');
+    if (!cleanPath.endsWith('/api')) {
+      throw new Error(`${activeVarName} must include the documented '/api' path convention (e.g. https://api.example.com/api).`);
+    }
+
+    apiUrl = `${parsedUrl.origin}${cleanPath}`;
+  }
+
+  let origin;
+  if (hasOrigin) {
+    const trimmedOrigin = env.VITE_API_ORIGIN.trim();
+    let parsedOrigin;
+    try {
+      parsedOrigin = new URL(trimmedOrigin);
+    } catch {
+      throw new Error('VITE_API_ORIGIN must be a valid, absolute URL.');
+    }
+
+    if (isProd && parsedOrigin.protocol !== 'https:') {
+      throw new Error('VITE_API_ORIGIN must use the HTTPS protocol in production.');
+    }
+
+    origin = parsedOrigin.origin;
+  } else {
+    // Derive origin directly from the validated API URL
+    origin = new URL(apiUrl).origin;
+  }
+
+  return {
+    API_BASE_URL: apiUrl,
+    API_ORIGIN: origin,
+  };
+}
+
+export const { API_BASE_URL, API_ORIGIN } = resolveApiConfig();
 
 /**
  * Resolves relative image paths (e.g. /uploads/hotels/uuid.jpg) to fully qualified URLs.
+ * Preserves absolute HTTPS, HTTP, data, and blob URLs (including Cloudflare R2 URLs) without rewriting.
+ * Does not append /api to media URLs.
  * Returns null if no image is present.
  *
  * @param {string|null} imagePath
+ * @param {string} [origin=API_ORIGIN]
  * @returns {string|null}
  */
-export const getImageUrl = (imagePath) => {
-  if (!imagePath) return null;
-  if (imagePath.startsWith('http://') || imagePath.startsWith('https://') || imagePath.startsWith('data:')) {
-    return imagePath;
+export const getImageUrl = (imagePath, origin = API_ORIGIN) => {
+  if (!imagePath || typeof imagePath !== 'string' || !imagePath.trim()) return null;
+  const trimmed = imagePath.trim();
+  if (
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('data:') ||
+    trimmed.startsWith('blob:')
+  ) {
+    return trimmed;
   }
-  return `${API_ORIGIN}${imagePath.startsWith('/') ? '' : '/'}${imagePath}`;
+  const cleanOrigin = (origin || '').replace(/\/+$/, '');
+  const cleanPath = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+  return `${cleanOrigin}${cleanPath}`;
 };
 
 /**

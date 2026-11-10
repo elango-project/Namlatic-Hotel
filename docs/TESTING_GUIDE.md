@@ -214,6 +214,24 @@ Built using **Vitest** + **React Testing Library** + **@testing-library/jest-dom
    - Environment documentation completeness: Verifies `client/.env.example` documents all required frontend variables (`VITE_API_URL`, `VITE_API_ORIGIN`, `VITE_APP_CURRENCY`).
    - Build-time secret exclusion: Asserts `client/.env.example` warns about Vite build-time client bundling and strictly forbids backend secrets (`DATABASE_URL`, R2 keys, passwords).
    - Deployment artifact safety: Confirms root directory has no duplicate `vercel.json` and `.gitignore` includes the `.vercel` build cache directory.
+11. **`apiEnv.test.js` (17 tests - Phase 5E.1):**
+   - Production API URL requirement: Rejects missing, empty, or whitespace-only `VITE_API_URL` in production.
+   - Absolute URL validation: Rejects malformed and relative URL inputs (`/api`, `not-a-url`) in production.
+   - Protocol security: Rejects unencrypted HTTP URLs in production, enforcing HTTPS.
+   - API path convention: Enforces documented `/api` path suffix on `VITE_API_URL`.
+   - Normalization: Verifies trailing slash normalization (`https://api.namlatic.com/api/` -> `https://api.namlatic.com/api`).
+   - Localhost fallback: Confirms safe fallback to `http://localhost:5000/api` and `http://localhost:5000` in development and test modes.
+   - Legacy compatibility: Verifies `VITE_API_BASE_URL` works when valid HTTPS, but cannot bypass production HTTPS checks.
+   - Precedence: Confirms `VITE_API_URL` takes precedence over legacy `VITE_API_BASE_URL`.
+   - Origin derivation: Derives `API_ORIGIN` directly from `VITE_API_URL` without the `/api` path when `VITE_API_ORIGIN` is omitted.
+   - Explicit origin override: Respects `VITE_API_ORIGIN` override when valid HTTPS.
+   - Origin validation: Rejects non-HTTPS or malformed `VITE_API_ORIGIN` in production.
+   - Legacy relative media resolution: Verifies `getImageUrl('/uploads/hotels/photo.jpg')` resolves against origin without appending `/api`.
+   - Path without leading slash: Correctly prepends leading slash for relative media paths.
+   - Absolute HTTPS preservation: Preserves absolute HTTPS URLs without rewriting.
+   - Cloudflare R2 preservation: Preserves absolute `https://pub-*.r2.dev/hotels/...` URLs without rewriting.
+   - Previews preservation: Preserves `data:` and `blob:` preview URLs without rewriting.
+   - Null handling: Safely returns `null` for null, undefined, empty, or whitespace image paths.
 
 ---
 
@@ -232,7 +250,7 @@ npm run test:unit
 npm run test:integration
 ```
 
-### Frontend Tests (113 tests):
+### Frontend Tests (130 tests):
 From the `client` directory:
 ```powershell
 # Run all frontend unit tests with Vitest
@@ -245,8 +263,8 @@ npm run test:watch
 ### Total Test Suite Count:
 - **Backend Unit Tests:** 138 passed
 - **Backend Integration Tests:** 63 passed
-- **Frontend Unit Tests:** 113 passed
-- **Total Automated Tests:** **314 / 314 passed (100% pass rate)**
+- **Frontend Unit Tests:** 130 passed
+- **Total Automated Tests:** **331 / 331 passed (100% pass rate)**
 
 ---
 
