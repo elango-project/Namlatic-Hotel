@@ -1,8 +1,24 @@
 const fs = require('fs');
 const path = require('path');
 const db = require('../config/db');
+const storage = require('../storage');
 
 const HOTEL_UPLOADS_DIR = path.resolve(__dirname, '../uploads/hotels');
+
+/**
+ * Normalizes and formats a hotel record for API responses.
+ * Resolves persistent storage references (e.g. r2:hotels/uuid.webp) to fully-qualified public URLs.
+ *
+ * @param {object|null} hotel
+ * @returns {object|null}
+ */
+const formatHotelResponse = (hotel) => {
+  if (!hotel) return null;
+  return {
+    ...hotel,
+    image_path: storage.getPublicUrl(hotel.image_path),
+  };
+};
 
 /**
  * Safely unlinks a file located in the uploads directory.
@@ -36,52 +52,35 @@ const safeUnlinkFile = async (filePath) => {
 };
 
 /**
- * Safely deletes a hotel image file from disk given its relative URL (e.g. /uploads/hotels/uuid.jpg).
- * Strictly prevents path traversal and will never delete files outside HOTEL_UPLOADS_DIR or .gitkeep.
+ * Safely deletes a hotel image from storage given its reference.
+ * Dynamically routes to the appropriate adapter:
+ * - Local references (/uploads/hotels/uuid.jpg) are deleted from local disk with path-traversal protection.
+ * - Cloud references (r2:hotels/uuid.webp) are deleted from Cloudflare R2 object storage.
  *
- * @param {string|null} relativeUrl - The relative image URL stored in the database
+ * @param {string|null} reference - The storage reference or relative URL stored in the database
  * @returns {Promise<boolean>} True if deleted or already missing, false if invalid
  */
-const safeDeleteHotelImage = async (relativeUrl) => {
-  if (!relativeUrl || typeof relativeUrl !== 'string') return false;
-
-  const filename = path.basename(relativeUrl);
-  if (!filename || filename === '.' || filename === '..' || filename === '.gitkeep') {
-    return false;
-  }
-
-  const targetPath = path.resolve(HOTEL_UPLOADS_DIR, filename);
-  const relative = path.relative(HOTEL_UPLOADS_DIR, targetPath);
-
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    console.warn(`[SECURITY] Blocked path traversal attempt on file deletion: ${relativeUrl}`);
-    return false;
-  }
-
-  try {
-    await fs.promises.unlink(targetPath);
-    return true;
-  } catch (err) {
-    if (err.code === 'ENOENT') {
-      // File was already missing on disk - handled safely
-      return false;
-    }
-    console.error(`[FS ERROR] Failed to unlink image ${targetPath}:`, err.message);
-    return false;
-  }
+const safeDeleteHotelImage = async (reference) => {
+  if (!reference || typeof reference !== 'string') return false;
+  return storage.delete(reference);
 };
 
 /**
  * Inserts a new hotel record into PostgreSQL using parameterized SQL.
- * If database insertion fails and an image was uploaded, cleans up the file.
+ * If database insertion fails and an image was uploaded, performs compensating cleanup.
  *
  * @param {object} hotelData - Validated hotel payload
  * @param {Express.Multer.File|null} [imageFile] - Uploaded file metadata
- * @returns {Promise<object>} The newly created hotel record
+ * @returns {Promise<object>} The newly created hotel record with resolved public image URL
  */
 const createHotel = async (hotelData, imageFile) => {
   const { title, description, latitude, longitude, price } = hotelData;
-  const imagePath = imageFile ? imageFile.relativeUrl : null;
+  let imagePath = null;
+
+  if (imageFile) {
+    const uploadResult = await storage.upload(imageFile);
+    imagePath = uploadResult.storageReference;
+  }
 
   const insertSql = `
     INSERT INTO hotels (title, description, latitude, longitude, price, image_path)
@@ -93,11 +92,14 @@ const createHotel = async (hotelData, imageFile) => {
 
   try {
     const result = await db.query(insertSql, values);
-    return result.rows[0];
+    return formatHotelResponse(result.rows[0]);
   } catch (err) {
-    // If database insert fails, clean up the newly uploaded image immediately
+    // If database insert fails, clean up the newly uploaded object immediately
+    if (imagePath) {
+      await storage.delete(imagePath).catch(() => {});
+    }
     if (imageFile && imageFile.path) {
-      await safeUnlinkFile(imageFile.path);
+      await safeUnlinkFile(imageFile.path).catch(() => {});
     }
     throw err;
   }
@@ -160,7 +162,7 @@ const listHotels = async (filters) => {
   const rows = dataResult.rows;
 
   return {
-    data: rows,
+    data: rows.map(formatHotelResponse),
     pagination: {
       total,
       limit: filters.limit,
@@ -174,7 +176,7 @@ const listHotels = async (filters) => {
  * Retrieves a single hotel record by its primary key ID.
  *
  * @param {string} id - The validated hotel ID
- * @returns {Promise<object|null>} The hotel record or null if not found
+ * @returns {Promise<object|null>} The hotel record with resolved public image URL or null if not found
  */
 const getHotelById = async (id) => {
   const sql = `
@@ -183,14 +185,14 @@ const getHotelById = async (id) => {
     WHERE id = $1;
   `;
   const result = await db.query(sql, [id]);
-  return result.rows[0] || null;
+  return formatHotelResponse(result.rows[0]);
 };
 
 /**
  * Updates an existing hotel record.
- * Handles image replacement with filesystem atomicity:
+ * Handles image replacement with storage safety:
  * - If no new image is provided, keeps the existing image_path.
- * - If a new image is provided, replaces image_path in DB, and removes old file AFTER commit.
+ * - If a new image is provided, uploads it first, replaces image_path in DB, and removes old file AFTER commit.
  * - If DB update fails, removes new file and leaves old file intact.
  *
  * @param {string} id - The validated hotel ID
@@ -200,29 +202,40 @@ const getHotelById = async (id) => {
  */
 const updateHotel = async (id, hotelData, imageFile) => {
   const { title, description, latitude, longitude, price } = hotelData;
+  let newStorageRef = null;
+
+  // 1. Upload replacement image first to verify storage availability
+  if (imageFile) {
+    const uploadResult = await storage.upload(imageFile);
+    newStorageRef = uploadResult.storageReference;
+  }
+
   const client = await db.pool.connect();
 
   try {
     await client.query('BEGIN');
 
-    // 1. Lock existing record for update to prevent concurrent race conditions
+    // 2. Lock existing record for update to prevent concurrent race conditions
     const checkSql = `SELECT id, image_path FROM hotels WHERE id = $1 FOR UPDATE;`;
     const checkRes = await client.query(checkSql, [id]);
 
     if (checkRes.rows.length === 0) {
       await client.query('ROLLBACK');
       // If hotel does not exist, clean up uploaded image immediately
+      if (newStorageRef) {
+        await storage.delete(newStorageRef).catch(() => {});
+      }
       if (imageFile && imageFile.path) {
-        await safeUnlinkFile(imageFile.path);
+        await safeUnlinkFile(imageFile.path).catch(() => {});
       }
       return null;
     }
 
     const oldImagePath = checkRes.rows[0].image_path;
     // Preserve existing image_path if no new file is uploaded
-    const finalImagePath = imageFile ? imageFile.relativeUrl : oldImagePath;
+    const finalImagePath = newStorageRef !== null ? newStorageRef : oldImagePath;
 
-    // 2. Perform parameterized update
+    // 3. Perform parameterized update
     const updateSql = `
       UPDATE hotels
       SET title = $1, description = $2, latitude = $3, longitude = $4, price = $5, image_path = $6
@@ -244,19 +257,24 @@ const updateHotel = async (id, hotelData, imageFile) => {
 
     const updatedHotel = updateRes.rows[0];
 
-    // 3. Delete old image ONLY AFTER database update has successfully committed
-    if (imageFile && oldImagePath && oldImagePath !== finalImagePath) {
-      await safeDeleteHotelImage(oldImagePath);
+    // 4. Delete old image ONLY AFTER database update has successfully committed
+    if (newStorageRef !== null && oldImagePath && oldImagePath !== finalImagePath) {
+      await storage.delete(oldImagePath).catch((delErr) => {
+        console.error('[STORAGE WARNING] Failed to delete replaced image:', delErr.message);
+      });
     }
 
-    return updatedHotel;
+    return formatHotelResponse(updatedHotel);
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     // If update fails, clean up the newly uploaded image immediately
-    if (imageFile && imageFile.path) {
-      await safeUnlinkFile(imageFile.path);
+    if (newStorageRef) {
+      await storage.delete(newStorageRef).catch(() => {});
     }
-    // Existing image remains untouched on disk and in database
+    if (imageFile && imageFile.path) {
+      await safeUnlinkFile(imageFile.path).catch(() => {});
+    }
+    // Existing image remains untouched in storage and in database
     throw err;
   } finally {
     client.release();
@@ -265,7 +283,7 @@ const updateHotel = async (id, hotelData, imageFile) => {
 
 /**
  * Deletes a hotel record by ID.
- * If the hotel had an associated image, removes it from disk ONLY AFTER successful database deletion.
+ * If the hotel had an associated image, removes it from storage ONLY AFTER successful database deletion.
  *
  * @param {string} id - The validated hotel ID
  * @returns {Promise<object|null>} Deleted hotel metadata or null if not found
@@ -287,7 +305,14 @@ const deleteHotel = async (id) => {
 
   // Delete the corresponding image file ONLY AFTER successful database deletion
   if (deletedRow.image_path) {
-    await safeDeleteHotelImage(deletedRow.image_path);
+    try {
+      await storage.delete(deletedRow.image_path);
+    } catch (storageErr) {
+      console.error(
+        `[STORAGE WARNING] Failed to delete orphaned media object from storage (${deletedRow.image_path}):`,
+        storageErr.message
+      );
+    }
   }
 
   return deletedRow;
@@ -353,4 +378,5 @@ module.exports = {
   getHotelStats,
   safeDeleteHotelImage,
   safeUnlinkFile,
+  formatHotelResponse,
 };

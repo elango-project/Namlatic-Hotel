@@ -46,24 +46,25 @@ const upload = multer({
 });
 
 /**
- * Validates actual binary signature (magic bytes) from the file on disk.
+ * Inspects the first 12 binary bytes directly from the file on disk.
+ * Returns verified validity, MIME type, and safe extension.
  * Prevents disguised files (e.g., PHP/HTML scripts named .png or .jpg).
  *
  * @param {string} filePath - Absolute path to the saved file
- * @returns {Promise<boolean>} - True if signature is valid JPEG, PNG, or WebP
+ * @returns {Promise<{ isValid: boolean, mimeType: string|null, extension: string|null }>}
  */
-async function verifyMagicBytes(filePath) {
+async function detectImageSignature(filePath) {
   let fd;
   try {
     fd = await fs.promises.open(filePath, 'r');
     const buffer = Buffer.alloc(12);
     const { bytesRead } = await fd.read(buffer, 0, 12, 0);
 
-    if (bytesRead < 4) return false;
+    if (bytesRead < 4) return { isValid: false, mimeType: null, extension: null };
 
     // JPEG: FF D8 FF
     if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
-      return true;
+      return { isValid: true, mimeType: 'image/jpeg', extension: '.jpg' };
     }
 
     // PNG: 89 50 4E 47 0D 0A 1A 0A
@@ -78,7 +79,7 @@ async function verifyMagicBytes(filePath) {
       buffer[6] === 0x1a &&
       buffer[7] === 0x0a
     ) {
-      return true;
+      return { isValid: true, mimeType: 'image/png', extension: '.png' };
     }
 
     // WebP: RIFF (bytes 0-3) + WEBP (bytes 8-11)
@@ -93,15 +94,27 @@ async function verifyMagicBytes(filePath) {
       buffer[10] === 0x42 && // B
       buffer[11] === 0x50 // P
     ) {
-      return true;
+      return { isValid: true, mimeType: 'image/webp', extension: '.webp' };
     }
 
-    return false;
+    return { isValid: false, mimeType: null, extension: null };
   } catch (_err) {
-    return false;
+    return { isValid: false, mimeType: null, extension: null };
   } finally {
     if (fd) await fd.close();
   }
+}
+
+/**
+ * Validates actual binary signature (magic bytes) from the file on disk.
+ * Preserves backwards compatibility for existing tests.
+ *
+ * @param {string} filePath - Absolute path to the saved file
+ * @returns {Promise<boolean>} - True if signature is valid JPEG, PNG, or WebP
+ */
+async function verifyMagicBytes(filePath) {
+  const result = await detectImageSignature(filePath);
+  return result.isValid;
 }
 
 /**
@@ -136,8 +149,8 @@ const uploadHotelImage = (req, res, next) => {
 
     // If a file was uploaded, verify its magic bytes signature
     if (req.file) {
-      const isValidSignature = await verifyMagicBytes(req.file.path);
-      if (!isValidSignature) {
+      const signature = await detectImageSignature(req.file.path);
+      if (!signature.isValid) {
         // Unlink the fraudulent file immediately
         await fs.promises.unlink(req.file.path).catch(() => {});
         return res.status(400).json({
@@ -148,7 +161,9 @@ const uploadHotelImage = (req, res, next) => {
         });
       }
 
-      // Populate safe relative URL path for database storage
+      // Attach verified metadata and safe relative URL for backward compatibility
+      req.file.verifiedMimeType = signature.mimeType;
+      req.file.verifiedExtension = signature.extension;
       req.file.relativeUrl = `/uploads/hotels/${req.file.filename}`;
     }
 
@@ -159,5 +174,6 @@ const uploadHotelImage = (req, res, next) => {
 module.exports = {
   uploadHotelImage,
   verifyMagicBytes,
+  detectImageSignature,
   UPLOAD_DIR,
 };

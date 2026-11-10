@@ -322,6 +322,95 @@ function parseRateLimitConfig(rawEnv, nodeEnv) {
 }
 
 /**
+ * Parses and validates the media storage driver.
+ * Supported values: 'local' | 'r2'
+ * Fails fast in production if undefined/empty to prevent silent fallback to local disk.
+ *
+ * @param {Record<string, string|undefined>} rawEnv
+ * @param {string} nodeEnv
+ * @returns {'local' | 'r2'}
+ */
+function parseMediaStorageDriver(rawEnv = process.env, nodeEnv = 'development') {
+  const rawDriver = rawEnv.MEDIA_STORAGE_DRIVER;
+
+  if (!rawDriver || rawDriver.trim() === '') {
+    if (nodeEnv === 'production') {
+      throw new Error(
+        'Missing MEDIA_STORAGE_DRIVER in production. Production must explicitly configure durable cloud storage ("r2"). Silent fallback to local ephemeral disk storage is prohibited.'
+      );
+    }
+    return 'local';
+  }
+
+  const normalized = rawDriver.trim().toLowerCase();
+  if (normalized === 'local') {
+    return 'local';
+  }
+  if (normalized === 'r2') {
+    return 'r2';
+  }
+
+  throw new Error(
+    `Invalid MEDIA_STORAGE_DRIVER: "${rawDriver}". Supported drivers are "local" and "r2".`
+  );
+}
+
+/**
+ * Validates and normalizes Cloudflare R2 object storage credentials and configuration.
+ * Fails fast with descriptive errors if any required variables are missing or invalid.
+ * Never leaks secret keys or access keys in error messages.
+ *
+ * @param {Record<string, string|undefined>} rawEnv
+ * @returns {{ accountId: string, accessKeyId: string, secretAccessKey: string, bucketName: string, publicBaseUrl: string, endpoint: string, region: string }}
+ */
+function parseR2Config(rawEnv = process.env) {
+  const accountId = rawEnv.R2_ACCOUNT_ID ? rawEnv.R2_ACCOUNT_ID.trim() : '';
+  const accessKeyId = rawEnv.R2_ACCESS_KEY_ID ? rawEnv.R2_ACCESS_KEY_ID.trim() : '';
+  const secretAccessKey = rawEnv.R2_SECRET_ACCESS_KEY ? rawEnv.R2_SECRET_ACCESS_KEY.trim() : '';
+  const bucketName = rawEnv.R2_BUCKET_NAME ? rawEnv.R2_BUCKET_NAME.trim() : '';
+  const rawPublicUrl = rawEnv.R2_PUBLIC_BASE_URL ? rawEnv.R2_PUBLIC_BASE_URL.trim() : '';
+
+  const missing = [];
+  if (!accountId) missing.push('R2_ACCOUNT_ID');
+  if (!accessKeyId) missing.push('R2_ACCESS_KEY_ID');
+  if (!secretAccessKey) missing.push('R2_SECRET_ACCESS_KEY');
+  if (!bucketName) missing.push('R2_BUCKET_NAME');
+  if (!rawPublicUrl) missing.push('R2_PUBLIC_BASE_URL');
+
+  if (missing.length > 0) {
+    throw new Error(
+      `R2 configuration error: Missing required environment variable(s): ${missing.join(', ')}.`
+    );
+  }
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(rawPublicUrl);
+  } catch (_e) {
+    throw new Error('R2 configuration error: R2_PUBLIC_BASE_URL must be a valid HTTP or HTTPS URL.');
+  }
+
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    throw new Error('R2 configuration error: R2_PUBLIC_BASE_URL protocol must be "http:" or "https:".');
+  }
+
+  // Strip trailing slashes to guarantee clean concatenation: ${publicBaseUrl}/${key}
+  const publicBaseUrl = rawPublicUrl.replace(/\/+$/, '');
+  const endpoint = `https://${accountId}.r2.cloudflarestorage.com`;
+  const region = 'auto';
+
+  return {
+    accountId,
+    accessKeyId,
+    secretAccessKey,
+    bucketName,
+    publicBaseUrl,
+    endpoint,
+    region,
+  };
+}
+
+/**
  * Parses and validates the complete environment configuration.
  *
  * @param {Record<string, string|undefined>} rawEnv - Environment variables map (defaults to process.env)
@@ -339,6 +428,9 @@ function parseAndValidateEnv(rawEnv = process.env) {
 
   const dbConfig = validateDatabaseConfig(rawEnv);
 
+  const mediaStorageDriver = parseMediaStorageDriver(rawEnv, nodeEnv);
+  const r2Config = mediaStorageDriver === 'r2' ? parseR2Config(rawEnv) : null;
+
   return {
     port,
     host,
@@ -348,12 +440,16 @@ function parseAndValidateEnv(rawEnv = process.env) {
     trustProxy,
     rateLimit,
     bodyLimit,
+    mediaStorageDriver,
+    r2Config,
     ...dbConfig,
     parseDatabaseUrl,
     validateDatabaseConfig,
     parseCorsOrigins,
     parseTrustProxy,
     parseRateLimitConfig,
+    parseMediaStorageDriver,
+    parseR2Config,
     parseAndValidateEnv,
   };
 }

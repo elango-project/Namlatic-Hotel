@@ -2,7 +2,13 @@ const fs = require('fs');
 const path = require('path');
 const { pool } = require('../../src/config/db');
 const app = require('../../src/app');
-const { safeDeleteHotelImage } = require('../../src/services/hotel.service');
+const hotelService = require('../../src/services/hotel.service');
+const { safeDeleteHotelImage } = hotelService;
+const {
+  setStorageService,
+  resetStorageService,
+  createStorageService,
+} = require('../../src/storage');
 
 const PORT = 5001; // Separate port for test isolation
 let server;
@@ -1136,7 +1142,401 @@ async function runIntegrationTests() {
         `healthStatus=${healthRes.status}, readyStatus=${readyRes.status}`
       );
     }
+
+    // -------------------------------------------------------------
+    // PART 10: Cloudflare R2 Storage & Resilience Tests (Phase 5D)
+    // -------------------------------------------------------------
+    console.log('\n--- PART 10: Cloudflare R2 Storage & Resilience Tests (Phase 5D) ---');
+
+    const s3Calls = [];
+    let s3UploadShouldFail = false;
+    let s3DeleteShouldFail = false;
+
+    const mockS3Client = {
+      send: async (command) => {
+        s3Calls.push(command);
+        if (command.input && command.input.Body) {
+          if (s3UploadShouldFail) {
+            throw new Error('Simulated Cloudflare R2 PutObject network timeout');
+          }
+        }
+        if (command.input && command.input.Key && !command.input.Body) {
+          if (s3DeleteShouldFail) {
+            throw new Error('Simulated Cloudflare R2 DeleteObject 500 error');
+          }
+        }
+        return { $metadata: { httpStatusCode: 200 } };
+      },
+    };
+
+    const r2PublicBase = 'https://cdn.namlatic-test.com';
+    const r2TestService = createStorageService({
+      driver: 'r2',
+      r2Config: {
+        accountId: 'test-account-12345',
+        accessKeyId: 'test-access-key',
+        secretAccessKey: 'test-secret-key',
+        bucketName: 'test-hotels-bucket',
+        publicBaseUrl: r2PublicBase,
+      },
+      s3Client: mockS3Client,
+    });
+
+    setStorageService(r2TestService);
+
+    let r2HotelId = null;
+
+    // Test 53: R2 CREATE: Creating a hotel with an image uploads to R2 and returns CDN URL
+    {
+      s3Calls.length = 0;
+      const res = await postHotel(
+        {
+          title: 'Cloudflare R2 Resort',
+          description: 'A luxurious property hosted with durable cloud storage.',
+          latitude: 25.204849,
+          longitude: 55.270783,
+          price: 450.0,
+        },
+        VALID_JPEG,
+        'resort.jpg',
+        'image/jpeg'
+      );
+
+      const dbCheck = res.body?.data?.id
+        ? await pool.query('SELECT image_path FROM hotels WHERE id = $1;', [res.body.data.id])
+        : { rows: [] };
+      const rawDbPath = dbCheck.rows[0]?.image_path;
+
+      assert(
+        'R2 STORAGE: Create hotel with image stores r2: reference in DB and returns public CDN URL',
+        res.status === 201 &&
+          res.body?.data?.image_path?.startsWith(`${r2PublicBase}/hotels/`) &&
+          rawDbPath?.startsWith('r2:hotels/') &&
+          s3Calls.length === 1 &&
+          s3Calls[0].input.Bucket === 'test-hotels-bucket' &&
+          s3Calls[0].input.ContentType === 'image/jpeg',
+        `status=${res.status}, image_path=${res.body?.data?.image_path}, rawDbPath=${rawDbPath}, s3Calls=${s3Calls.length}`
+      );
+
+      if (res.body?.data?.id) {
+        r2HotelId = res.body.data.id;
+        createdHotelIds.push(r2HotelId);
+      }
+    }
+
+    // Test 54: R2 CREATE: Creating a hotel without an image leaves image_path null and makes no S3 calls
+    {
+      s3Calls.length = 0;
+      const res = await postHotel({
+        title: 'Cloudflare R2 No Image Hotel',
+        description: 'Budget hotel without an exterior photo.',
+        latitude: 25.197197,
+        longitude: 55.274376,
+        price: 120.0,
+      });
+
+      assert(
+        'R2 STORAGE: Create hotel without image leaves image_path null without calling R2',
+        res.status === 201 && res.body?.data?.image_path === null && s3Calls.length === 0,
+        `status=${res.status}, image_path=${res.body?.data?.image_path}, s3Calls=${s3Calls.length}`
+      );
+
+      if (res.body?.data?.id) createdHotelIds.push(res.body.data.id);
+    }
+
+    // Test 55: R2 UPDATE: Replacing an existing image uploads new object and deletes old object after commit
+    {
+      s3Calls.length = 0;
+      const initialDbCheck = await pool.query('SELECT image_path FROM hotels WHERE id = $1;', [r2HotelId]);
+      const oldR2Ref = initialDbCheck.rows[0]?.image_path;
+
+      const res = await putHotel(
+        r2HotelId,
+        {
+          title: 'Cloudflare R2 Resort - Renovated',
+          description: 'A newly renovated luxurious property with updated photos.',
+          latitude: 25.204849,
+          longitude: 55.270783,
+          price: 495.0,
+        },
+        VALID_PNG,
+        'renovated.png',
+        'image/png'
+      );
+
+      const updatedDbCheck = await pool.query('SELECT image_path FROM hotels WHERE id = $1;', [r2HotelId]);
+      const newR2Ref = updatedDbCheck.rows[0]?.image_path;
+
+      const putCall = s3Calls.find((c) => c.input?.Body);
+      const delCall = s3Calls.find((c) => c.input?.Key && !c.input?.Body);
+
+      assert(
+        'R2 STORAGE: Replace image uploads replacement and deletes old object only after commit',
+        res.status === 200 &&
+          res.body?.data?.image_path?.startsWith(`${r2PublicBase}/hotels/`) &&
+          res.body?.data?.image_path?.endsWith('.png') &&
+          newR2Ref?.startsWith('r2:hotels/') &&
+          newR2Ref !== oldR2Ref &&
+          putCall !== undefined &&
+          delCall !== undefined &&
+          delCall.input.Key === oldR2Ref.slice(3),
+        `status=${res.status}, newRef=${newR2Ref}, oldRef=${oldR2Ref}, s3Calls=${s3Calls.length}`
+      );
+    }
+
+    // Test 56: R2 UPDATE: Updating text fields without new image preserves existing R2 reference
+    {
+      s3Calls.length = 0;
+      const beforeUpdate = await pool.query('SELECT image_path FROM hotels WHERE id = $1;', [r2HotelId]);
+      const preservedRef = beforeUpdate.rows[0]?.image_path;
+
+      const res = await putHotel(r2HotelId, {
+        title: 'Cloudflare R2 Resort - Price Mutated',
+        description: 'Updated description without changing the property photo.',
+        latitude: 25.204849,
+        longitude: 55.270783,
+        price: 520.0,
+      });
+
+      const afterUpdate = await pool.query('SELECT image_path FROM hotels WHERE id = $1;', [r2HotelId]);
+
+      assert(
+        'R2 STORAGE: Update without image preserves existing R2 image and makes zero S3 deletion calls',
+        res.status === 200 &&
+          res.body?.data?.price === '520.00' &&
+          afterUpdate.rows[0]?.image_path === preservedRef &&
+          s3Calls.length === 0,
+        `status=${res.status}, preservedRef=${preservedRef}, s3Calls=${s3Calls.length}`
+      );
+    }
+
+    // Test 57: R2 DELETE: Deleting hotel removes database record and deletes associated R2 object
+    {
+      s3Calls.length = 0;
+      const beforeDelete = await pool.query('SELECT image_path FROM hotels WHERE id = $1;', [r2HotelId]);
+      const imageToDelete = beforeDelete.rows[0]?.image_path;
+
+      const res = await deleteHotelReq(r2HotelId);
+
+      const afterDelete = await pool.query('SELECT id FROM hotels WHERE id = $1;', [r2HotelId]);
+      const delCall = s3Calls.find((c) => c.input?.Key === imageToDelete.slice(3));
+
+      assert(
+        'R2 STORAGE: Delete hotel removes DB record and deletes associated R2 object from bucket',
+        res.status === 200 &&
+          afterDelete.rows.length === 0 &&
+          delCall !== undefined &&
+          delCall.input.Bucket === 'test-hotels-bucket',
+        `status=${res.status}, dbRows=${afterDelete.rows.length}, s3Calls=${s3Calls.length}`
+      );
+
+      // Remove from createdHotelIds since it's now deleted
+      const idx = createdHotelIds.indexOf(r2HotelId);
+      if (idx !== -1) createdHotelIds.splice(idx, 1);
+    }
+
+    // Test 58: R2 RESILIENCE: R2 upload failure stops request and creates zero database records
+    {
+      s3Calls.length = 0;
+      s3UploadShouldFail = true;
+
+      const countBefore = await pool.query('SELECT COUNT(*) FROM hotels;');
+      const res = await postHotel(
+        {
+          title: 'Failed R2 Upload Hotel',
+          description: 'This hotel creation must fail because R2 is unreachable.',
+          latitude: 24.0,
+          longitude: 54.0,
+          price: 200.0,
+        },
+        VALID_JPEG,
+        'failing.jpg',
+        'image/jpeg'
+      );
+      s3UploadShouldFail = false;
+
+      const countAfter = await pool.query('SELECT COUNT(*) FROM hotels;');
+
+      assert(
+        'R2 RESILIENCE: R2 upload failure aborts creation and leaves zero database records with broken references',
+        res.status === 500 &&
+          parseInt(countBefore.rows[0].count, 10) === parseInt(countAfter.rows[0].count, 10),
+        `status=${res.status}, before=${countBefore.rows[0].count}, after=${countAfter.rows[0].count}`
+      );
+    }
+
+    // Test 59: R2 RESILIENCE: Database failure after R2 upload triggers compensating DeleteObjectCommand
+    {
+      s3Calls.length = 0;
+      const tmpFile = path.resolve(SRC_DIR, 'uploads/hotels', 'test-compensate.jpg');
+      await fs.promises.writeFile(tmpFile, VALID_JPEG);
+
+      let threwDbError = false;
+      try {
+        await hotelService.createHotel(
+          {
+            title: 'Compensating Hotel',
+            description: 'Triggers DB constraint error after upload',
+            latitude: 24.0,
+            longitude: 54.0,
+            price: -50.0, // Violates chk_hotels_price_positive in DB
+          },
+          {
+            path: tmpFile,
+            filename: 'test-compensate.jpg',
+            verifiedMimeType: 'image/jpeg',
+            verifiedExtension: '.jpg',
+          }
+        );
+      } catch (_err) {
+        threwDbError = true;
+      }
+
+      const putCommand = s3Calls.find((c) => c.input?.Body);
+      const compensateCommand = s3Calls.find((c) => c.input?.Key && !c.input?.Body);
+
+      assert(
+        'R2 RESILIENCE: Database insert failure triggers best-effort compensating delete of uploaded R2 object',
+        threwDbError &&
+          putCommand !== undefined &&
+          compensateCommand !== undefined &&
+          compensateCommand.input.Key === putCommand.input.Key,
+        `threw=${threwDbError}, s3Calls=${s3Calls.length}`
+      );
+    }
+
+    // Test 60: R2 RESILIENCE: Database update failure cleans up new image and preserves original old image
+    {
+      s3Calls.length = 0;
+      const baseTmpFile = path.resolve(SRC_DIR, 'uploads/hotels', 'base-tmp.jpg');
+      await fs.promises.writeFile(baseTmpFile, VALID_JPEG);
+
+      const baseHotel = await hotelService.createHotel(
+        {
+          title: 'Resilient Update Hotel',
+          description: 'Testing update rollback resilience.',
+          latitude: 25.0,
+          longitude: 55.0,
+          price: 300.0,
+        },
+        {
+          path: baseTmpFile,
+          filename: 'base-tmp.jpg',
+          verifiedMimeType: 'image/jpeg',
+          verifiedExtension: '.jpg',
+        }
+      );
+      if (baseHotel?.id) createdHotelIds.push(baseHotel.id);
+
+      const dbCheckBefore = await pool.query('SELECT image_path FROM hotels WHERE id = $1;', [baseHotel.id]);
+      const originalImageRef = dbCheckBefore.rows[0].image_path;
+
+      s3Calls.length = 0;
+      const newTmpFile = path.resolve(SRC_DIR, 'uploads/hotels', 'replacement-tmp.png');
+      await fs.promises.writeFile(newTmpFile, VALID_PNG);
+
+      let threwUpdateError = false;
+      try {
+        await hotelService.updateHotel(
+          baseHotel.id,
+          {
+            title: 'Resilient Update Hotel Mutated',
+            description: 'New description',
+            latitude: 199.0, // Violates chk_hotels_latitude_range in DB
+            longitude: 55.0,
+            price: 300.0,
+          },
+          {
+            path: newTmpFile,
+            filename: 'replacement-tmp.png',
+            verifiedMimeType: 'image/png',
+            verifiedExtension: '.png',
+          }
+        );
+      } catch (_err) {
+        threwUpdateError = true;
+      }
+
+      const dbCheckAfter = await pool.query('SELECT image_path FROM hotels WHERE id = $1;', [baseHotel.id]);
+      const currentImageRef = dbCheckAfter.rows[0].image_path;
+
+      const deletedKeys = s3Calls
+        .filter((c) => c.input?.Key && !c.input?.Body)
+        .map((c) => c.input.Key);
+
+      assert(
+        'R2 RESILIENCE: Failed database update deletes replacement image and leaves original image intact',
+        threwUpdateError &&
+          currentImageRef === originalImageRef &&
+          deletedKeys.includes(originalImageRef.slice(3)) === false,
+        `threw=${threwUpdateError}, currentRef=${currentImageRef}, deletedKeys=${JSON.stringify(deletedKeys)}`
+      );
+    }
+
+    // Test 61: R2 RESILIENCE: R2 deletion failure after successful DB deletion logs warning and returns HTTP 200
+    {
+      const delTmpFile = path.resolve(SRC_DIR, 'uploads/hotels', 'del-tmp.jpg');
+      await fs.promises.writeFile(delTmpFile, VALID_JPEG);
+
+      const hotelToDelete = await hotelService.createHotel(
+        {
+          title: 'Hotel for Delete Failure Test',
+          description: 'Tests tolerance when R2 delete encounters network issue.',
+          latitude: 25.0,
+          longitude: 55.0,
+          price: 250.0,
+        },
+        {
+          path: delTmpFile,
+          filename: 'del-tmp.jpg',
+          verifiedMimeType: 'image/jpeg',
+          verifiedExtension: '.jpg',
+        }
+      );
+
+      s3DeleteShouldFail = true;
+      const res = await deleteHotelReq(hotelToDelete.id);
+      s3DeleteShouldFail = false;
+
+      const dbCheck = await pool.query('SELECT id FROM hotels WHERE id = $1;', [hotelToDelete.id]);
+
+      assert(
+        'R2 RESILIENCE: R2 deletion failure after successful DB deletion logs warning, maintains DB consistency, and returns HTTP 200',
+        res.status === 200 && dbCheck.rows.length === 0,
+        `status=${res.status}, dbRows=${dbCheck.rows.length}`
+      );
+    }
+
+    // Test 62: LEGACY COMPATIBILITY: Existing local image references resolve properly and delete without touching R2
+    {
+      s3Calls.length = 0;
+      const legacyInsert = await pool.query(`
+        INSERT INTO hotels (title, description, latitude, longitude, price, image_path)
+        VALUES ('Legacy Local Hotel', 'Created before Cloudflare R2 migration.', 24.5, 54.5, 180.0, '/uploads/hotels/legacy-sample.jpg')
+        RETURNING id, image_path;
+      `);
+      const legacyId = legacyInsert.rows[0].id;
+      createdHotelIds.push(legacyId);
+
+      const getRes = await getHotelById(legacyId);
+      const delRes = await deleteHotelReq(legacyId);
+      const legIdx = createdHotelIds.indexOf(legacyId);
+      if (legIdx !== -1) createdHotelIds.splice(legIdx, 1);
+
+      assert(
+        'LEGACY COMPATIBILITY: Legacy local image references resolve as relative paths and do not trigger S3 commands',
+        getRes.status === 200 &&
+          getRes.body?.data?.image_path === '/uploads/hotels/legacy-sample.jpg' &&
+          delRes.status === 200 &&
+          s3Calls.length === 0,
+        `getStatus=${getRes.status}, image_path=${getRes.body?.data?.image_path}, s3Calls=${s3Calls.length}`
+      );
+    }
+
+    // Reset storage service to default local driver
+    resetStorageService();
   } finally {
+    resetStorageService();
     // Clean up created test hotels from database
     if (createdHotelIds.length > 0) {
       console.log(`\nCleaning up ${createdHotelIds.length} test hotels from database...`);

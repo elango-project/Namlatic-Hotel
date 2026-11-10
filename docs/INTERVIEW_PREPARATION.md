@@ -38,10 +38,10 @@ This guide prepares you to defend every engineering decision in the Namlatic Hot
 ---
 
 ### Q6: What is the difference between your unit tests and integration tests?
-> **Answer:** "Our **backend unit tests** (100 tests) test individual functions in complete isolation with zero external dependencies. They verify input validation rules (coordinates, prices, titles, pagination boundaries, 64-bit BIGINT ranges, strict non-trimmed whitespace rejection, safe vs unsafe integer enforcement), binary magic byte detection, path traversal blocks, database error mapping, DATABASE_URL parsing and TLS/channel-binding policies (Phase 5B), dynamic port binding, CORS allowlist logic, reverse proxy anti-spoofing IP extraction, and rate limit header formatting (Phase 5C). They execute in ~700 ms using Node.js's native `node:test` runner.
-> Our **backend integration tests** (52 tests) test the entire system end-to-end: they launch an Express test server on an isolated port, issue HTTP fetch requests with multipart form data, write and delete files on disk, execute live queries against PostgreSQL 18.6, assert both database state and disk storage integrity, test health/ready probes, and verify Helmet security headers, CORS origin enforcement, body size caps, and probe rate limiter exemptions.
+> **Answer:** "Our **backend unit tests** (125 tests) test individual functions in complete isolation with zero external dependencies. They verify input validation rules (coordinates, prices, titles, pagination boundaries, 64-bit BIGINT ranges, strict non-trimmed whitespace rejection, safe vs unsafe integer enforcement), binary magic byte detection, path traversal blocks, database error mapping, DATABASE_URL parsing and TLS/channel-binding policies (Phase 5B), dynamic port binding, CORS allowlist logic, reverse proxy anti-spoofing IP extraction, rate limit header formatting (Phase 5C), storage driver selection, Cloudflare R2 credential/endpoint validation, UUID-based object key generation, MIME detection from binary signatures, public CDN URL resolution, compensating deletes, and missing object deletion tolerance (Phase 5D). They execute in ~750 ms using Node.js's native `node:test` runner.
+> Our **backend integration tests** (62 tests) test the entire system end-to-end: they launch an Express test server on an isolated port, issue HTTP fetch requests with multipart form data, write and delete files on disk, execute live queries against PostgreSQL 18.6, assert both database state and disk storage integrity, test health/ready probes, verify Helmet security headers, CORS origin enforcement, body size caps, probe rate limiter exemptions, and verify the complete Cloudflare R2 storage lifecycle (create with/without media, image replacement, deletion, upload failure rollback, compensating delete on DB failure, DB update failure rollback, R2 deletion tolerance, and legacy local image reference coexistence).
 > Our **frontend unit tests** (102 tests) run with Vitest and React Testing Library, testing UI components, form validation rules, image lifecycle cleanup, dynamic Leaflet map-center synchronization with primitive dependencies, route BIGINT safety without trimming, Redux slices, and mock API flows with 100% reliability.
-> Across the entire application, **254 automated tests** pass with a 100% pass rate."
+> Across the entire application, **289 automated tests** pass with a 100% pass rate."
 
 ---
 
@@ -55,9 +55,9 @@ This guide prepares you to defend every engineering decision in the Namlatic Hot
 ---
 
 ### Q8: What are the current production limitations of this project, and how would you address them?
-> **Answer:** "Two distinct production limitations remain:
-> 1. **Durable Media Persistence (Phase 5D):** Currently, images are saved to the server's local filesystem. On cloud platforms like Render or AWS ECS with ephemeral containers, local files are wiped upon re-deployment. In Phase 5D, file storage will be decoupled by streaming uploads directly to durable object storage (e.g., Cloudflare R2, Neon Object Storage, or AWS S3), storing only immutable CDN URLs in PostgreSQL. Second, we will add image re-encoding via `sharp` to strip malicious EXIF metadata and optimize image compression.
-> 2. **Owner Authentication & Authorization (Phase 5F):** Currently, the portal implements strict defense-in-depth validation and IP-based rate limiting (Phase 5C), but lacks user identity sessions. Any client within their rate limit quota can create, modify, or delete hotel records. Robust authentication (JWT / session cookies / OAuth) and role-based property ownership must be enforced before public production exposure."
+> **Answer:** "With persistent media storage resolved via Cloudflare R2 in Phase 5D, two production considerations remain:
+> 1. **Image Re-Encoding & Optimization:** While Phase 5D introduced durable object storage via Cloudflare R2 and binary magic-byte MIME detection, image files are currently stored as uploaded. In high-scale production, adding server-side image processing via `sharp` would strip potentially sensitive EXIF metadata (GPS coordinates, camera serial numbers) and compress images into modern formats (WebP/AVIF) with responsive thumbnail variants.
+> 2. **Owner Authentication & Authorization (Phase 5F):** Currently, the portal implements strict defense-in-depth validation and IP-based rate limiting (Phase 5C), but lacks user identity sessions. Any client within their rate limit quota can create, modify, or delete hotel records. Robust authentication (JWT / session cookies / OAuth) and role-based property ownership must be enforced before public multi-tenant production exposure."
 
 ---
 
@@ -216,3 +216,54 @@ This guide prepares you to defend every engineering decision in the Namlatic Hot
 > - If health endpoints were subject to general rate limiting (e.g., 300 requests per 15 minutes), continuous automated polling would trigger HTTP 429 within 30–60 minutes.
 > - The cloud orchestrator would interpret HTTP 429 as service failure, restart the healthy container, enter a crash loop, and cause production downtime.
 > - We implement `skip: (req) => req.path === '/health' || req.path === '/ready'` on `generalLimiter`, ensuring infrastructure probes remain uninhibited while user-facing APIs remain protected."
+
+---
+
+### Q27: Why decouple image storage from the Express container filesystem, and why Cloudflare R2?
+> **Answer:** "In modern containerized deployments (Render, Fly.io, AWS ECS, Kubernetes), application instances execute in ephemeral environments:
+> 1. **Ephemeral Filesystem:** When a container restarts, scales down, crashes, or is replaced by a new deployment, any data written to the local disk is permanently erased. Storing uploaded hotel images on local container disk (`/uploads`) results in silent, catastrophic data loss upon redeployment.
+> 2. **Horizontal Scalability:** In a multi-replica setup, a photo uploaded to Container A is inaccessible to Container B if stored locally, causing broken images whenever requests hit different nodes.
+> 3. **Why Cloudflare R2:**
+>    - **Zero Egress Fees:** Traditional cloud object stores like AWS S3 charge steep data egress fees ($0.09/GB) every time users or CDNs fetch images. Cloudflare R2 charges $0 for data egress, making image-heavy portals dramatically more cost-effective.
+>    - **S3-Compatible API:** R2 implements the standard Amazon S3 API, allowing the application to use the official `@aws-sdk/client-s3` without proprietary vendor lock-in.
+>    - **Edge Network Integration:** R2 integrates natively with Cloudflare's global CDN and custom domains, enabling low-latency image delivery with edge caching worldwide."
+
+---
+
+### Q28: How do you store object references in PostgreSQL without tightly coupling the database to a specific CDN URL?
+> **Answer:** "A common anti-pattern is storing fully qualified CDN URLs (e.g., `https://pub-abc123xyz.r2.dev/hotels/uuid.jpg`) directly in the database.
+> - **The Problem:** If you rebind your bucket to a custom brand domain (`https://media.namlatic.com`), change CDN providers, rotate staging/production buckets, or swap storage vendors, every row in the database must be migrated, risking database downtime and corrupt links.
+> - **Our Solution (Abstract Storage References):**
+>   - In PostgreSQL, the `image_path` column stores only a provider-prefixed abstract key: `r2:hotels/<uuid>.<ext>` (or `/uploads/hotels/<filename>` for local disk development).
+>   - In the API service layer (`hotel.service.js`), `formatHotelResponse(hotel)` intercepts outbound responses and calls `storageService.getPublicUrl(hotel.image_path)`.
+>   - For R2, this dynamically resolves the reference against the configured `R2_PUBLIC_BASE_URL`: `https://${R2_PUBLIC_BASE_URL}/hotels/<uuid>.<ext>`.
+>   - **Benefits:** The database remains completely domain-agnostic and provider-independent. CDN domains can be swapped instantly via an environment variable with zero database queries. Furthermore, the frontend client (`client/src/services/api.js`) requires zero changes because it receives the fully qualified URL ready for rendering."
+
+---
+
+### Q29: How do you coordinate object storage mutations with PostgreSQL ACID transactions, and what is the orphan-object limitation?
+> **Answer:** "Cloud object stores (S3/R2) and relational databases (PostgreSQL) do not participate in shared Two-Phase Commit (2PC) transactions. A network or process crash can easily produce inconsistency. We address this through defensive sequencing and compensating actions:
+> 1. **Create Flow:**
+>    - Upload binary object to R2 first.
+>    - Insert record into PostgreSQL.
+>    - If the PostgreSQL insert fails (e.g., validation or constraint violation), execute an immediate compensating `DeleteObjectCommand` on R2 to clean up the newly uploaded object before returning HTTP 500.
+> 2. **Update / Replace Flow:**
+>    - Upload replacement object to R2 first.
+>    - Acquire row lock (`SELECT ... FOR UPDATE`) in PostgreSQL and commit the updated reference.
+>    - Only *after* the PostgreSQL transaction successfully commits do we delete the old image from R2.
+>    - If the database update fails, execute a compensating delete on the *new* object, leaving the existing database record and old R2 object intact.
+> 3. **Delete Flow:**
+>    - Delete the PostgreSQL record first (`DELETE FROM hotels ... RETURNING image_path`).
+>    - If the database delete succeeds, delete the object from R2.
+>    - If R2 deletion fails (e.g., transient network hiccup), log a structured warning and return HTTP 200. We intentionally do NOT fail or rollback the database deletion, prioritizing transactional state consistency for the user over storage cleanup.
+> 4. **Orphan-Object Limitation:** In the edge case of a server crash or network partition precisely between the DB commit and the S3 delete call, an unreferenced object may remain in the bucket. In high-scale production, this is managed via S3 lifecycle expiration policies, bucket inventory diffs, or periodic reconciliation background workers."
+
+---
+
+### Q30: How does the application preserve local filesystem development while running Cloudflare R2 in production?
+> **Answer:** "We implemented a provider-neutral storage adapter interface (`StorageService`):
+> 1. **Adapter Interface:** Both `LocalStorageAdapter` and `R2StorageAdapter` implement the same contract: `upload(file, options)`, `delete(storageReference)`, `getPublicUrl(storageReference)`, and `isManagedReference(storageReference)`.
+> 2. **Environment Driver:** Driven by `MEDIA_STORAGE_DRIVER=local|r2`.
+>    - In `development` and `test` environments, `MEDIA_STORAGE_DRIVER` defaults to `'local'`, saving files to `server/src/uploads/hotels` without needing Cloudflare credentials, API keys, or internet connectivity.
+>    - In `production` (`NODE_ENV=production`), omitting `MEDIA_STORAGE_DRIVER` throws an immediate, fatal startup error (`"MEDIA_STORAGE_DRIVER is required in production"`). Silent fallback to local ephemeral disk is strictly forbidden.
+> 3. **Seamless Reference Routing:** The `StorageService` router inspects reference prefixes during deletion. If an R2 deployment encounters a legacy hotel record referencing `/uploads/hotels/legacy.jpg`, the router delegates deletion to the local storage adapter rather than sending a malformed key to Cloudflare R2. This ensures flawless backward compatibility during phased migrations."

@@ -539,3 +539,60 @@ Page-specific metadata is dynamically injected into the document head via `<Helm
 - **Body Size Caps:** JSON payloads are strictly bounded to 10 KB (`express.json({ limit: '10kb' })`). Payloads exceeding this limit receive HTTP 413 (`Payload Too Large`).
 - **Process Exception Guards:** `process.on('unhandledRejection')` and `process.on('uncaughtException')` log fatal errors and initiate graceful shutdown to prevent server hangs or silent failures.
 - **Production Error Masking:** Stack traces and internal database errors are withheld from client responses in production (`process.env.NODE_ENV === 'production'`), returning a sanitized message (`"Internal server error"`).
+
+---
+
+## 8. Durable Cloud Media Storage Architecture (Phase 5D)
+
+### 8.1 Why Local Disk Storage is Unsuitable on Cloud PaaS (Render)
+- **Ephemeral Filesystem Limitation:** Cloud web service containers on Render, AWS ECS, and similar PaaS providers operate on ephemeral container filesystems. When a new commit is deployed, an automatic scaling event occurs, or a container crashes and restarts, the local disk is wiped. Any uploaded hotel images saved directly to `server/src/uploads/hotels` on the container disk are permanently lost.
+- **Decoupled Object Storage:** To ensure production durability, media storage is decoupled from the web application processes and delegated to **Cloudflare R2** durable object storage.
+
+### 8.2 Provider-Neutral Storage Abstraction
+The application interacts with media storage exclusively through an abstract, provider-neutral storage service layer (`server/src/storage/`):
+- **`LocalStorageAdapter`:** Manages files on the local filesystem (`server/src/uploads/hotels`) during local development and testing. Enforces directory traversal protection (`..`), protected file guards (`.gitkeep`), and safe unlinking.
+- **`R2StorageAdapter`:** Manages durable object storage in Cloudflare R2 using the official `@aws-sdk/client-s3` (AWS SDK v3 for JavaScript) client.
+- **`StorageService` (Unified Router):** Dynamically delegates upload operations to the active storage driver (`MEDIA_STORAGE_DRIVER=local` or `MEDIA_STORAGE_DRIVER=r2`) and intelligently routes delete operations based on reference prefixes (`r2:` to R2 adapter, `/uploads/` to local adapter). This strictly prevents local filesystem helpers from ever receiving cloud object references.
+
+### 8.3 Cloudflare R2 & S3 Client Integration
+- **Endpoint Structure:** Uses Cloudflare R2's official S3-compatible API endpoint: `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com`.
+- **Region:** Configured with region `'auto'` in accordance with Cloudflare R2 specification.
+- **Least-Privilege API Tokens:** Requires a bucket-scoped R2 API Token with minimal read and write permissions restricted strictly to the designated bucket (`R2_BUCKET_NAME`). Account-level or admin permissions are strictly prohibited.
+- **Public Read Access:** Public image delivery is routed through Cloudflare's edge CDN via `R2_PUBLIC_BASE_URL` (e.g., `https://pub-<hash>.r2.dev` or a custom vanity domain `https://assets.namlatic.com`). Public bucket listing and anonymous bucket writes are disabled.
+
+### 8.4 Stable Object Keys & Zero-Migration Database References
+- **Server-Generated Object Keys:** Keys are generated server-side using cryptographic UUIDs: `hotels/<uuid>.<ext>`. User-supplied filenames are never used in object keys, eliminating filename injection and overwriting collisions.
+- **Verified MIME Type & Cache Control:** Uploads detect the binary magic bytes of the staged image and attach the verified `ContentType` (`image/jpeg`, `image/png`, `image/webp`) and immutable long-lived HTTP caching headers (`Cache-Control: public, max-age=31536000, immutable`).
+- **Database Reference Persistence:**
+  - Full public URLs are **never** stored in PostgreSQL. Storing full URLs tightly couples the database to a specific CDN hostname or bucket provider, requiring complex migrations if domains or storage providers change.
+  - The database persists a stable, unambiguous storage reference in the existing `image_path TEXT` column:
+    - R2 format: `r2:hotels/<uuid>.<ext>`
+    - Local format: `/uploads/hotels/<uuid>.<ext>`
+  - **Zero Database Migration:** Because `image_path` was defined as `TEXT` in Phase 2, no SQL DDL migration is required. Existing PostgreSQL queries, aggregate count queries (`COUNT(image_path)` in `getHotelStats`), and constraints remain 100% compatible.
+
+### 8.5 Public URL Resolution in API Response Layer
+- When hotel entities are serialized for API responses, `formatHotelResponse(hotel)` translates internal storage references to public URLs:
+  - `r2:hotels/<uuid>.<ext>` $\to$ `https://<R2_PUBLIC_BASE_URL>/hotels/<uuid>.<ext>`
+  - `/uploads/hotels/<uuid>.<ext>` $\to$ `/uploads/hotels/<uuid>.<ext>` (or local path)
+- The React frontend receives the exact same `image_path` property shape. Because `client/src/services/api.js` already checks `imagePath.startsWith('http')` and leaves full URLs untouched, the frontend functions seamlessly with zero client-side code changes.
+
+### 8.6 Storage Lifecycle & PostgreSQL Transaction Coordination
+Because external object storage and relational PostgreSQL cannot participate in a single two-phase commit, the application coordinates storage mutations and database transactions defensively:
+1. **Hotel Creation:**
+   - Image is uploaded to storage first.
+   - PostgreSQL `INSERT INTO hotels ...` executes with the resulting storage reference.
+   - If PostgreSQL insertion fails (e.g. database error or constraint violation), the application executes a compensating delete (`storage.delete(imagePath)`) to clean up the newly created cloud object.
+2. **Hotel Update (Image Replacement):**
+   - If a new photo is uploaded, it is uploaded to storage first.
+   - PostgreSQL transaction locks the row (`SELECT ... FOR UPDATE`), updates the record to the new reference, and commits.
+   - The old image is deleted from storage **only after** the PostgreSQL transaction successfully commits.
+   - If the database update fails, the newly uploaded replacement object is compensating-deleted, and the old image remains untouched in both PostgreSQL and object storage.
+3. **Hotel Deletion:**
+   - PostgreSQL executes `DELETE FROM hotels WHERE id = $1 RETURNING id, image_path`.
+   - The associated storage object is deleted **only after** the database deletion succeeds.
+   - If the object was already deleted or missing from storage, the operation completes safely without throwing.
+
+### 8.7 Orphan Object Handling & Limitations
+- If a cloud object storage deletion fails due to an unexpected S3 network timeout or API outage *after* the PostgreSQL transaction has already committed, the application does not fail the HTTP response (since the database deletion was successful).
+- Instead, it logs a sanitized, actionable warning (`[STORAGE WARNING] Failed to delete orphaned media object...`).
+- In production architectures, periodic asynchronous bucket reconciliation (e.g., comparing active database `image_path` references against bucket inventory via a background worker or lifecycle rule) serves as a secondary garbage-collection safety net.
