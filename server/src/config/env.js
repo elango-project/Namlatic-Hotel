@@ -212,6 +212,67 @@ function validateDatabaseConfig(rawEnv = process.env) {
 }
 
 /**
+ * Validates migration database configuration.
+ * Permits a dedicated migration connection string (MIGRATION_DATABASE_URL)
+ * with elevated DDL privileges (namlatic_migrator), while allowing safe fallback
+ * to DATABASE_URL in local development or if MIGRATION_DATABASE_URL is unset.
+ *
+ * @param {Record<string, string|undefined>} rawEnv
+ * @returns {{ isUsingMigrationUrl: boolean, migrationDatabaseUrl: string|null, migrationPoolConfig: object|null, migrationUser: string|null }}
+ */
+function validateMigrationDatabaseConfig(rawEnv = process.env) {
+  const nodeEnv = rawEnv.NODE_ENV || 'development';
+  const isProduction = nodeEnv === 'production';
+  const rawMigrationUrl = rawEnv.MIGRATION_DATABASE_URL ? rawEnv.MIGRATION_DATABASE_URL.trim() : null;
+
+  if (rawMigrationUrl) {
+    const parsed = parseDatabaseUrl(rawMigrationUrl);
+
+    if (isProduction) {
+      if (!parsed.password) {
+        throw new Error('In production, MIGRATION_DATABASE_URL must include a non-empty database password.');
+      }
+      if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+        throw new Error('In production, MIGRATION_DATABASE_URL cannot point to localhost or loopback addresses.');
+      }
+      if (
+        parsed.sslmode === 'disable' ||
+        parsed.sslmode === 'no-verify' ||
+        parsed.rawSsl === '0' ||
+        parsed.rawSsl === 'false'
+      ) {
+        throw new Error('In production, unencrypted migration connections are not permitted. MIGRATION_DATABASE_URL cannot disable SSL.');
+      }
+      if (!parsed.sslmode || (parsed.sslmode !== 'require' && parsed.sslmode !== 'verify-full')) {
+        throw new Error('In production, MIGRATION_DATABASE_URL must explicitly specify an encrypted SSL mode (e.g. ?sslmode=require).');
+      }
+    }
+
+    const migrationPoolOptions = {
+      connectionString: rawMigrationUrl,
+      max: parseInt(rawEnv.MIGRATION_DB_POOL_MAX, 10) || 2,
+      min: 0,
+      idleTimeoutMillis: 10000,
+      connectionTimeoutMillis: 5000,
+    };
+
+    return {
+      isUsingMigrationUrl: true,
+      migrationDatabaseUrl: rawMigrationUrl,
+      migrationPoolConfig: migrationPoolOptions,
+      migrationUser: parsed.username,
+    };
+  }
+
+  return {
+    isUsingMigrationUrl: false,
+    migrationDatabaseUrl: null,
+    migrationPoolConfig: null,
+    migrationUser: null,
+  };
+}
+
+/**
  * Parses and validates CORS origins into a list of exact allowed URLs.
  * In production, wildcards (*) are forbidden and all entries must be valid http/https URLs.
  * In development, standard localhost development ports are supported by default.
@@ -497,6 +558,7 @@ function parseAndValidateEnv(rawEnv = process.env) {
   const bodyLimit = rawEnv.BODY_LIMIT || '10kb';
 
   const dbConfig = validateDatabaseConfig(rawEnv);
+  const migrationDbConfig = validateMigrationDatabaseConfig(rawEnv);
 
   const mediaStorageDriver = parseMediaStorageDriver(rawEnv, nodeEnv);
   const r2Config = mediaStorageDriver === 'r2' ? parseR2Config(rawEnv, nodeEnv) : null;
@@ -516,8 +578,10 @@ function parseAndValidateEnv(rawEnv = process.env) {
     backendProxySecret: proxySecrets.backendProxySecret,
     backendProxySecretOld: proxySecrets.backendProxySecretOld,
     ...dbConfig,
+    ...migrationDbConfig,
     parseDatabaseUrl,
     validateDatabaseConfig,
+    validateMigrationDatabaseConfig,
     parseCorsOrigins,
     parseTrustProxy,
     parseRateLimitConfig,

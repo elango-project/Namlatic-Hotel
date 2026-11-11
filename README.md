@@ -220,6 +220,7 @@ npm test
 - [x] **Phase 5F-A3: Frontend Authentication UI & Protected Routing** (Owner login page with Argon2id credentials, Redux Toolkit authSlice, persistent HttpOnly session restoration via `GET /api/auth/me`, `ProtectedRoute` route protection wrapper preventing flash of private content, session expiration interceptor with unauthorized event subscription, accessible show/hide password toggle, header and sidebar logout controls with loading feedback, responsive design verified across 8 viewports, 614 automated tests passing)
 - [x] **Phase 5F-A3.1: Frontend Authentication Reliability Fixes & Documentation Consistency** (Resolved connection-error handling in ProtectedRoute and LoginPage, differentiated invalid credentials, rate limiting, and network/server outages, added recoverable retry actions, corrected session lifecycle documentation to 7-day absolute lifetime / 2-hour idle timeout / 5-minute activity throttle with database and cookie agreement, improved screenshot script portability with project-relative output and dynamic browser resolution, added 22 new regression tests across 3 suites, 636 automated tests passing)
 - [x] **Phase 5F-B: Cloud Resource Provisioning & Production Deployment Preparation** (Comprehensive multi-cloud provisioning blueprint and runbook; Sharp EXIF/GPS metadata stripping and auto-orientation pipeline for JPEG, PNG, and WebP uploads; Render Infrastructure Blueprint render.yaml; Neon least-privilege role setup; Cloudflare R2 bucket-scoped configuration; Vercel same-origin proxy validation; docs/DEPLOYMENT.md guide; 642 automated tests passing)
+- [x] **Phase 5F-B.1: Production Deployment Configuration Review** (Enforced database least-privilege role separation between DDL schema migration role namlatic_migrator and restricted DML runtime role namlatic_app; separated MIGRATION_DATABASE_URL from DATABASE_URL with SSL enforcement; documented Cloudflare R2 public-read delivery model for sanitized media; documented Render free-tier constraints and Vercel Hobby commercial licensing restrictions; established empirical TRUST_PROXY verification methodology; 647 automated tests passing)
 - [ ] **Phase 5G: Production End-to-End & Security Verification** (Live cloud verification, CORS validation, SSL audit, probe monitoring)
 
 ---
@@ -238,7 +239,7 @@ npm test
 > - **Activity Refresh Throttling:** Database write updates to sliding idle expiration are throttled to at most once per 5 minutes.
 > - **Absolute Ceiling:** Sliding idle extensions are bounded by the hard absolute lifetime (`Math.min(now + 2h, expires_at)`).
 >
-> Probes (`GET /api/health` and `GET /api/ready`) remain unauthenticated and unthrottled for platform orchestrators. Single-owner portal architecture is fully operational and verified across 642 automated tests.
+> Probes (`GET /api/health` and `GET /api/ready`) remain unauthenticated and unthrottled for platform orchestrators. Single-owner portal architecture is fully operational and verified across 647 automated tests.
 
 ---
 

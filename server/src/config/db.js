@@ -4,6 +4,7 @@ const env = require('./env');
 const defaultPool = new Pool(env.dbPoolConfig);
 
 let activePool = defaultPool;
+let migrationPoolInstance = null;
 
 // Log connection events in development
 defaultPool.on('connect', () => {
@@ -55,4 +56,33 @@ function resetPool() {
   activePool = defaultPool;
 }
 
-module.exports = { pool, query, setPool, resetPool };
+/**
+ * Returns a dedicated pool for schema migrations if MIGRATION_DATABASE_URL was configured,
+ * or falls back to the active application pool.
+ * @returns {import('pg').Pool}
+ */
+function getMigrationPool() {
+  if (migrationPoolInstance) {
+    return migrationPoolInstance;
+  }
+  if (env.migrationPoolConfig) {
+    migrationPoolInstance = new Pool(env.migrationPoolConfig);
+    migrationPoolInstance.on('error', (err) => {
+      console.error('[DB MIGRATE] Unexpected error on idle migration client:', err.message);
+    });
+    return migrationPoolInstance;
+  }
+  return activePool;
+}
+
+/**
+ * Closes the dedicated migration pool if one was instantiated.
+ */
+async function closeMigrationPool() {
+  if (migrationPoolInstance) {
+    await migrationPoolInstance.end().catch(() => {});
+    migrationPoolInstance = null;
+  }
+}
+
+module.exports = { pool, query, setPool, resetPool, getMigrationPool, closeMigrationPool };

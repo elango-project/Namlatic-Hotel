@@ -4,6 +4,7 @@ const sasl = require('pg/lib/crypto/sasl');
 const {
   parseDatabaseUrl,
   validateDatabaseConfig,
+  validateMigrationDatabaseConfig,
   parseAndValidateEnv,
 } = require('../../src/config/env');
 const { sanitizeDbError } = require('../../src/controllers/health.controller');
@@ -587,6 +588,75 @@ describe('Unit Tests: Database Environment & SSL Configuration (Phase 5B)', () =
       assert.equal(
         sanitizeDbError(null),
         'Database connection unavailable'
+      );
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // 12. Migration Database Configuration & Role Separation (Phase 5F-B.1)
+  // --------------------------------------------------------------------------
+  describe('Migration Database Configuration & Role Separation (Phase 5F-B.1)', () => {
+    it('returns isUsingMigrationUrl: false when MIGRATION_DATABASE_URL is unset', () => {
+      const config = validateMigrationDatabaseConfig({
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgresql://namlatic_app:pass@ep-host.aws.neon.tech/namlatic_prod?sslmode=require',
+      });
+
+      assert.equal(config.isUsingMigrationUrl, false);
+      assert.equal(config.migrationDatabaseUrl, null);
+      assert.equal(config.migrationPoolConfig, null);
+      assert.equal(config.migrationUser, null);
+    });
+
+    it('successfully configures a dedicated migration role URL with conservative pool limit (max: 2)', () => {
+      const migratorUrl = 'postgresql://namlatic_migrator:MigratorPass123!@ep-host.aws.neon.tech/namlatic_prod?sslmode=require';
+      const config = validateMigrationDatabaseConfig({
+        NODE_ENV: 'production',
+        MIGRATION_DATABASE_URL: migratorUrl,
+      });
+
+      assert.equal(config.isUsingMigrationUrl, true);
+      assert.equal(config.migrationDatabaseUrl, migratorUrl);
+      assert.equal(config.migrationUser, 'namlatic_migrator');
+      assert.equal(config.migrationPoolConfig.connectionString, migratorUrl);
+      assert.equal(config.migrationPoolConfig.max, 2);
+      assert.equal(config.migrationPoolConfig.idleTimeoutMillis, 10000);
+      assert.equal(config.migrationPoolConfig.connectionTimeoutMillis, 5000);
+    });
+
+    it('rejects unencrypted MIGRATION_DATABASE_URL in production', () => {
+      assert.throws(
+        () => {
+          validateMigrationDatabaseConfig({
+            NODE_ENV: 'production',
+            MIGRATION_DATABASE_URL: 'postgresql://namlatic_migrator:pass@ep-host.aws.neon.tech/namlatic_prod?sslmode=disable',
+          });
+        },
+        /In production, unencrypted migration connections are not permitted/
+      );
+    });
+
+    it('rejects localhost in production for MIGRATION_DATABASE_URL', () => {
+      assert.throws(
+        () => {
+          validateMigrationDatabaseConfig({
+            NODE_ENV: 'production',
+            MIGRATION_DATABASE_URL: 'postgresql://namlatic_migrator:pass@localhost:5432/namlatic_prod?sslmode=require',
+          });
+        },
+        /In production, MIGRATION_DATABASE_URL cannot point to localhost/
+      );
+    });
+
+    it('rejects missing password in production for MIGRATION_DATABASE_URL', () => {
+      assert.throws(
+        () => {
+          validateMigrationDatabaseConfig({
+            NODE_ENV: 'production',
+            MIGRATION_DATABASE_URL: 'postgresql://namlatic_migrator@ep-host.aws.neon.tech/namlatic_prod?sslmode=require',
+          });
+        },
+        /In production, MIGRATION_DATABASE_URL must include a non-empty database password/
       );
     });
   });

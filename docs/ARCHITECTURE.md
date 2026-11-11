@@ -1083,6 +1083,21 @@ A declaration file at the repository root defines the backend service for Render
 - `runtime: node` with `engines: { "node": ">=22.0.0" }`
 - `rootDir: server`, `buildCommand: npm install`, `startCommand: npm start`
 - `healthCheckPath: /api/health`
-- `envVars` mapped with `sync: false` for all secrets (`DATABASE_URL`, `BACKEND_PROXY_SECRET`, `R2_*`, `CORS_ORIGIN`).
+- `envVars` mapped with `sync: false` for all secrets (`DATABASE_URL`, `MIGRATION_DATABASE_URL`, `BACKEND_PROXY_SECRET`, `R2_*`, `CORS_ORIGIN`).
+
+### 14.4 Production Deployment Configuration & Least-Privilege Role Separation (Phase 5F-B.1)
+- **Database Least-Privilege Role Architecture:**
+  - **Schema Migrator Role (`namlatic_migrator`):** Dedicated PostgreSQL role granted DDL privileges on schema `public`. It owns application tables and the `schema_migrations` audit ledger. Connected via optional `MIGRATION_DATABASE_URL` (enforcing `sslmode=require` in production with conservative connection limits `max: 2`).
+  - **Runtime Application Role (`namlatic_app`):** Strictly restricted runtime role used by the Express backend for day-to-day operations. Possesses DML privileges only (`SELECT`, `INSERT`, `UPDATE`, `DELETE` on tables, `USAGE`, `SELECT`, `UPDATE` on sequences configured via `ALTER DEFAULT PRIVILEGES`). Has zero schema `CREATE`, `DROP`, or DDL permissions, preventing arbitrary schema tampering even in the event of an application SQL vulnerability. Connects via `DATABASE_URL`.
+  - **Fallback Semantics:** If `MIGRATION_DATABASE_URL` is omitted (standard in local development), `server/src/database/migrate.js` falls back gracefully to `DATABASE_URL`.
+- **Cloudflare R2 Public-Read Delivery Model:**
+  - Objects are served publicly over HTTPS via a custom domain or `r2.dev` subdomain (`R2_PUBLIC_BASE_URL`).
+  - Bucket writes, updates, and deletions require authenticated backend S3 credentials (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`).
+  - No database records, tokens, session verifiers, or server secrets are stored in object storage.
+  - Pre-upload Sharp EXIF/GPS metadata stripping and magic-byte validation are strictly mandatory to ensure owner and guest privacy.
+- **Hosting Platform Constraints & Verification:**
+  - **Render Free-Tier Constraints:** 15-minute idle inactivity sleep, 50–90 second cold start latency, ephemeral disks (local storage wiped on sleep/redeploy—making R2 mandatory), and 750 shared free hours. Free tier suitable for testing/demo; Render Starter ($7/mo) recommended for continuous commercial uptime.
+  - **Vercel Hobby Plan Terms:** Vercel Hobby is strictly for personal, non-commercial use. Commercial hotel operations require Vercel Pro.
+  - **Empirical Proxy Verification (`TRUST_PROXY`):** `TRUST_PROXY=1` trusts Render's reverse proxy hop. When proxied through Vercel's edge, empirical verification via live request logging (`req.ip`, `req.ips`, `X-Forwarded-For`) is required to ensure rate limiting binds to the authentic client IP without being spoofable or artificially throttled.
 
 *For the complete deployment runbook, environment-variable mapping matrix, and provider setup guides, refer to [Production Deployment Guide](DEPLOYMENT.md).*

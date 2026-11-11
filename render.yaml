@@ -29,7 +29,9 @@ services:
       # The following sensitive credentials are set in the Render Dashboard
       # and marked sync: false to prevent leaking secrets in Git:
       - key: DATABASE_URL
-        sync: false
+        sync: false # Runtime application connection (namlatic_app restricted role)
+      - key: MIGRATION_DATABASE_URL
+        sync: false # Optional: schema migration connection (namlatic_migrator role)
       - key: CORS_ORIGIN
         sync: false
       - key: BACKEND_PROXY_SECRET

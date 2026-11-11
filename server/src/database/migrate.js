@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { pool } = require('../config/db');
+const { pool, getMigrationPool, closeMigrationPool } = require('../config/db');
 
 const MIGRATIONS_DIR = path.resolve(__dirname, 'migrations');
 
@@ -41,7 +41,9 @@ async function runMigrations(customTarget = null) {
     client = customTarget;
     shouldRelease = false;
   } else {
-    client = await pool.connect();
+    // Acquire dedicated client from migration pool (configured via MIGRATION_DATABASE_URL or fallback)
+    const targetPool = getMigrationPool();
+    client = await targetPool.connect();
     shouldRelease = true;
   }
 
@@ -127,14 +129,14 @@ if (require.main === module) {
           `[MIGRATE] Completed. Applied: ${applied.length}, Skipped (Already applied): ${skipped.length}`
         );
       }
-      return pool.end();
+      return Promise.all([closeMigrationPool(), pool.end().catch(() => {})]);
     })
     .then(() => {
       process.exit(0);
     })
     .catch((err) => {
       console.error('[MIGRATE FATAL]', err.message);
-      pool.end().finally(() => process.exit(1));
+      Promise.all([closeMigrationPool(), pool.end().catch(() => {})]).finally(() => process.exit(1));
     });
 }
 
