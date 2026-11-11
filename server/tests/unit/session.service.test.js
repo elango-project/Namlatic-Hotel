@@ -72,7 +72,41 @@ describe('Unit Tests: Session Service Logic & Token Hashing (Phase 5F-A2.2)', ()
 
     it('revokeAllUserSessions returns 0 safely when userId is invalid', async () => {
       assert.equal(await revokeAllUserSessions(null), 0);
-      assert.equal(await revokeAllUserSessions('123'), 0);
+      assert.equal(await revokeAllUserSessions('abc'), 0);
+      assert.equal(await revokeAllUserSessions(NaN), 0);
+    });
+
+    it('validateSession returns null when session is concurrently revoked during idle update', async () => {
+      const mockPool = {
+        query: async (sql, params) => {
+          if (sql.includes('FROM sessions s')) {
+            const now = new Date();
+            return {
+              rows: [{
+                id: 101,
+                user_id: 1,
+                created_at: new Date(now.getTime() - 3600000),
+                last_active_at: new Date(now.getTime() - 600000), // 10 minutes ago (> 5m throttle)
+                expires_at: new Date(now.getTime() + 86400000),
+                idle_expires_at: new Date(now.getTime() + 3600000),
+                revoked_at: null,
+                user_actual_id: 1,
+                email: 'test@namlatic.com',
+                role: 'owner',
+                status: 'active',
+              }],
+            };
+          }
+          if (sql.includes('UPDATE sessions')) {
+            // Simulate concurrent revocation: row was revoked in flight, so rowCount is 0
+            return { rowCount: 0 };
+          }
+          return { rows: [] };
+        },
+      };
+
+      const result = await validateSession('some_valid_looking_token', {}, mockPool);
+      assert.equal(result, null);
     });
   });
 });

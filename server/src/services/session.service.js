@@ -176,11 +176,15 @@ async function validateSession(rawToken, metadata = {}, dbPool = pool) {
           idle_expires_at = $2,
           ip_address = COALESCE($3, ip_address),
           user_agent = COALESCE($4, user_agent)
-      WHERE id = $5
+      WHERE id = $5 AND revoked_at IS NULL
+      RETURNING id
     `;
 
-    // Fire update asynchronously or synchronously
-    await dbPool.query(updateQuery, [now, newIdleExpiresAt, safeIp, safeUa, row.id]);
+    // Concurrency defense: If concurrently revoked while in flight, rowCount will be 0
+    const updateResult = await dbPool.query(updateQuery, [now, newIdleExpiresAt, safeIp, safeUa, row.id]);
+    if (updateResult.rowCount === 0) {
+      return null;
+    }
   }
 
   return {

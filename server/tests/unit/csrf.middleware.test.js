@@ -135,16 +135,16 @@ describe('Unit Tests: Tokenless CSRF Protection Middleware (Phase 5F-A2.2)', () 
 
       assert.equal(nextCalled, false);
       assert.equal(res.statusCode, 403);
-      assert.equal(res.body.message.includes('cross-site fetch rejected'), true);
+      assert.equal(res.body.message.includes('untrusted fetch site metadata'), true);
     });
 
-    it('permits same-origin or same-site fetch metadata requests', () => {
+    it('rejects case-insensitive CROSS-SITE Sec-Fetch-Site with HTTP 403', () => {
       let nextCalled = false;
       const req = {
         method: 'POST',
         headers: {
           'x-requested-with': 'XMLHttpRequest',
-          'sec-fetch-site': 'same-origin',
+          'sec-fetch-site': 'CROSS-SITE',
           origin: env.corsOrigins[0],
         },
       };
@@ -154,7 +154,51 @@ describe('Unit Tests: Tokenless CSRF Protection Middleware (Phase 5F-A2.2)', () 
         nextCalled = true;
       });
 
-      assert.equal(nextCalled, true);
+      assert.equal(nextCalled, false);
+      assert.equal(res.statusCode, 403);
+      assert.equal(res.body.message.includes('untrusted fetch site metadata'), true);
+    });
+
+    it('rejects unexpected or malformed Sec-Fetch-Site metadata with HTTP 403', () => {
+      let nextCalled = false;
+      const req = {
+        method: 'POST',
+        headers: {
+          'x-requested-with': 'XMLHttpRequest',
+          'sec-fetch-site': 'attacker-crafted-value',
+          origin: env.corsOrigins[0],
+        },
+      };
+      const res = createMockRes();
+
+      verifyTokenlessCsrf(req, res, () => {
+        nextCalled = true;
+      });
+
+      assert.equal(nextCalled, false);
+      assert.equal(res.statusCode, 403);
+      assert.equal(res.body.message.includes('untrusted fetch site metadata'), true);
+    });
+
+    it('permits same-origin, same-site, or none fetch metadata requests', () => {
+      for (const validSite of ['same-origin', 'same-site', 'none']) {
+        let nextCalled = false;
+        const req = {
+          method: 'POST',
+          headers: {
+            'x-requested-with': 'XMLHttpRequest',
+            'sec-fetch-site': validSite,
+            origin: env.corsOrigins[0],
+          },
+        };
+        const res = createMockRes();
+
+        verifyTokenlessCsrf(req, res, () => {
+          nextCalled = true;
+        });
+
+        assert.equal(nextCalled, true, `Expected valid site "${validSite}" to pass`);
+      }
     });
   });
 

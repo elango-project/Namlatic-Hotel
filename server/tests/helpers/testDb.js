@@ -195,8 +195,49 @@ async function closeTestPool() {
   }
 }
 
+/**
+ * Verifies at runtime that the connected PostgreSQL role has least privileges:
+ * - rolsuper = false
+ * - rolcreatedb = false
+ * - rolcreaterole = false
+ *
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<{ rolname: string, rolsuper: boolean, rolcreatedb: boolean, rolcreaterole: boolean }>}
+ */
+async function verifyTestRolePrivileges(pool) {
+  const result = await pool.query(
+    'SELECT rolname, rolsuper, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname = current_user'
+  );
+
+  if (!result || result.rows.length === 0) {
+    throw new Error('Safety check failed: Unable to inspect current database role in pg_roles.');
+  }
+
+  const role = result.rows[0];
+  if (role.rolsuper) {
+    throw new Error(
+      `Safety check failed: Connected test role "${role.rolname}" is a PostgreSQL superuser (rolsuper = true). Integration tests must run under a non-superuser role.`
+    );
+  }
+
+  if (role.rolcreatedb) {
+    throw new Error(
+      `Safety check failed: Connected test role "${role.rolname}" has CREATEDB privilege (rolcreatedb = true). Integration tests must run with least privilege.`
+    );
+  }
+
+  if (role.rolcreaterole) {
+    throw new Error(
+      `Safety check failed: Connected test role "${role.rolname}" has CREATEROLE privilege (rolcreaterole = true). Integration tests must run with least privilege.`
+    );
+  }
+
+  return role;
+}
+
 module.exports = {
   validateTestDatabaseConfig,
+  verifyTestRolePrivileges,
   getTestPool,
   closeTestPool,
   getAuthorizedHosts,

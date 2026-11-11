@@ -22,6 +22,7 @@ const {
   buildSessionCookie,
   buildClearSessionCookie,
   COOKIE_NAME,
+  DEV_COOKIE_NAME,
 } = require('../utils/cookieHelper');
 const { NO_CACHE_VALUE } = require('../middleware/auth.middleware');
 
@@ -152,7 +153,9 @@ async function logout(req, res, next) {
   res.setHeader('Cache-Control', NO_CACHE_VALUE);
 
   const cookies = parseCookies(req.headers.cookie);
-  const rawToken = cookies[COOKIE_NAME];
+  const rawToken = env.nodeEnv === 'production'
+    ? cookies[COOKIE_NAME]
+    : (cookies[COOKIE_NAME] || cookies[DEV_COOKIE_NAME]);
 
   if (rawToken) {
     try {

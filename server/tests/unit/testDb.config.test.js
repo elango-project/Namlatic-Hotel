@@ -1,6 +1,6 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { validateTestDatabaseConfig } = require('../helpers/testDb');
+const { validateTestDatabaseConfig, verifyTestRolePrivileges } = require('../helpers/testDb');
 
 describe('Unit Tests: Dedicated Test Database Safety Configuration (Phase 5F-A2.1.2)', () => {
   const originalEnv = process.env;
@@ -328,5 +328,76 @@ describe('Unit Tests: Dedicated Test Database Safety Configuration (Phase 5F-A2.
         );
       }
     );
+  });
+
+  describe('Runtime Test Role Privilege Verification (verifyTestRolePrivileges)', () => {
+    it('passes when role has rolsuper=false, rolcreatedb=false, rolcreaterole=false', async () => {
+      const mockPool = {
+        query: async (sql) => {
+          assert.equal(sql.includes('pg_roles'), true);
+          return {
+            rows: [{ rolname: 'namlatic_test', rolsuper: false, rolcreatedb: false, rolcreaterole: false }],
+          };
+        },
+      };
+
+      const result = await verifyTestRolePrivileges(mockPool);
+      assert.equal(result.rolname, 'namlatic_test');
+      assert.equal(result.rolsuper, false);
+      assert.equal(result.rolcreatedb, false);
+      assert.equal(result.rolcreaterole, false);
+    });
+
+    it('rejects role with rolsuper=true', async () => {
+      const mockPool = {
+        query: async () => ({
+          rows: [{ rolname: 'namlatic_test', rolsuper: true, rolcreatedb: false, rolcreaterole: false }],
+        }),
+      };
+
+      await assert.rejects(
+        async () => verifyTestRolePrivileges(mockPool),
+        { message: /Connected test role "namlatic_test" is a PostgreSQL superuser/ }
+      );
+    });
+
+    it('rejects role with rolcreatedb=true', async () => {
+      const mockPool = {
+        query: async () => ({
+          rows: [{ rolname: 'namlatic_test', rolsuper: false, rolcreatedb: true, rolcreaterole: false }],
+        }),
+      };
+
+      await assert.rejects(
+        async () => verifyTestRolePrivileges(mockPool),
+        { message: /has CREATEDB privilege/ }
+      );
+    });
+
+    it('rejects role with rolcreaterole=true', async () => {
+      const mockPool = {
+        query: async () => ({
+          rows: [{ rolname: 'namlatic_test', rolsuper: false, rolcreatedb: false, rolcreaterole: true }],
+        }),
+      };
+
+      await assert.rejects(
+        async () => verifyTestRolePrivileges(mockPool),
+        { message: /has CREATEROLE privilege/ }
+      );
+    });
+
+    it('rejects when pg_roles query returns no rows', async () => {
+      const mockPool = {
+        query: async () => ({
+          rows: [],
+        }),
+      };
+
+      await assert.rejects(
+        async () => verifyTestRolePrivileges(mockPool),
+        { message: /Unable to inspect current database role in pg_roles/ }
+      );
+    });
   });
 });

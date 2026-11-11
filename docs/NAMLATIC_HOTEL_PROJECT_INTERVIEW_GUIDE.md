@@ -4,9 +4,9 @@
 > **Repository:** [https://github.com/elango-project/Namlatic-Hotel](https://github.com/elango-project/Namlatic-Hotel)
 > **Runtime Environment:** Node.js 22+ (v24 LTS Recommended) • React 18.3.1 • Express 4.21.1 • PostgreSQL 18.6
 > **Current Verified Git Head:** `154dd46e9ee0b9ef1782c9679d61980d26dc9aad`
-> **Current Implementation Phase:** Phase 5F-A2.2 (Backend Authentication Middleware, Session Management & API Route Protection)
-> **Automated Test Suite Status:** **512 / 512 Automated Tests Passing (100% Pass Rate)**
-> *(255 Backend Unit + 118 Backend Integration + 139 Frontend Unit)*
+> **Current Implementation Phase:** Phase 5F-A2.3 (Backend Security Audit, Authentication Hardening & Final Verification)
+> **Automated Test Suite Status:** **567 / 567 Automated Tests Passing (100% Pass Rate)**
+> *(272 Backend Unit + 156 Backend Integration + 139 Frontend Unit)*
 
 ---
 
@@ -52,9 +52,9 @@
 ## Document Scope & Current-State Accuracy Notice
 
 To maintain absolute credibility during technical interviews, every statement in this guide distinguishes verified code from pending roadmaps:
-1. **Implemented and Verified:** Code exists in the repository and is proven by 512 passing automated tests (e.g., PostgreSQL relational schema, native parameterized SQL queries, Redux Toolkit pagination, reusable `HotelForm` with `URL.createObjectURL` memory cleanup, Leaflet map integration, Cloudflare R2 storage adapter, migration advisory locks, native TTY masked input tooling, dedicated `namlatic_hotel_test` test harness with non-superuser role `namlatic_test`, timing-safe proxy secret verification, tokenless CSRF defense, and complete hotel API lockdown).
+1. **Implemented and Verified:** Code exists in the repository and is proven by 567 passing automated tests (e.g., PostgreSQL relational schema, native parameterized SQL queries, Redux Toolkit pagination, reusable `HotelForm` with `URL.createObjectURL` memory cleanup, Leaflet map integration, Cloudflare R2 storage adapter, migration advisory locks, native TTY masked input tooling, dedicated `namlatic_hotel_test` test harness with non-superuser role `namlatic_test`, timing-safe proxy secret verification, tokenless CSRF defense, and complete hotel API lockdown).
 2. **Implemented in Code but Not Live-Provisioned:** The code exists and is verified via local/mock unit tests, but live third-party cloud infrastructure has not been provisioned (e.g., Cloudflare R2 bucket credentials, Neon serverless PostgreSQL, Render Web Service, Vercel production deployment).
-3. **Implemented in Phase 5F-A2.2:** Owner authentication middleware, PostgreSQL-backed sessions (`__Host-namlatic_session`), Argon2id login with timing defense and bounded concurrency, idempotent logout, `/api/auth/me`, timing-safe proxy secret verification (`x-vercel-proxy-secret`), tokenless CSRF defense (`X-Requested-With` + Origin/Referer verification), and complete lockdown of all hotel CRUD APIs.
+3. **Implemented in Phases 5F-A2.2 & 5F-A2.3:** Owner authentication middleware, PostgreSQL-backed sessions (`__Host-namlatic_session` with safe dev plain-HTTP fallback), Argon2id login with timing defense and bounded concurrency, idempotent logout, `/api/auth/me`, timing-safe proxy secret verification (`x-vercel-proxy-secret`), health probe method bypass restriction limiting exemptions strictly to GET/HEAD probes, fetch metadata lowercase normalization and strict site allowlisting, throttled sliding idle refresh race condition mitigation, runtime PostgreSQL catalog test role least-privilege verification, and complete lockdown of all hotel CRUD APIs verified via a 6x6 adversarial matrix.
 4. **Planned Roadmap (Phase 5F-A3 / 5F-B):** Frontend Owner Login UI & Redux session state, EXIF stripping before public image upload, Redis distributed rate-limiting, and multi-tenant hotel owner authorization.
 
 ---
@@ -100,7 +100,7 @@ The core assignment specified an end-to-end full-stack application demonstrating
 ┌──────────────────────────────────────▼──────────────────────────────────────┐
 │ 4. THE IMPLEMENTED RESULT                                                   │
 │ A resilient inventory portal verified across 10 viewports (360px to 1440px),│
-│ 512 passing unit/integration tests, zero security vulnerabilities, and      │
+│ 567 passing unit/integration tests, zero security vulnerabilities, and      │
 │ documented compliance with the Twelve-Factor App methodology.               │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -1667,6 +1667,7 @@ In technical interviews, clearly articulate the **exact current state** of the a
 | **Phase 5F-A2.1.1** | Safety & Isolation Patch for PostgreSQL Integration Tests. | **Implemented & Verified** (Dedicated `namlatic_hotel_test` DB, tracked user IDs). |
 | **Phase 5F-A2.1.2** | Dedicated Non-Superuser Test Role & Database Host Safety. | **Implemented & Verified** (Restricted `namlatic_test` role, exact DB name matching, allowed-hosts guard, fictional credentials). |
 | **Phase 5F-A2.2** | Route Guards, Session Middleware, Login/Logout Endpoints & Lock-Down. | **Implemented & Verified** (All hotel CRUD APIs locked down behind `requireAuth`, timing-safe proxy-secret check, tokenless CSRF defense, 512 tests passing). |
+| **Phase 5F-A2.3** | Backend Security Audit, Authentication Hardening & Final Verification. | **Audited & Hardened** (Health probe bypass fixed, RFC 6265bis `__Host-` cookie enforced with safe dev plain-HTTP fallback, fetch metadata normalized & allowlisted, race condition mitigated, runtime role privileges verified, 567 tests passing). |
 | **Phase 5F-B / 5F-A3** | Frontend Owner Login UI & Redux Session State. | **Planned Roadmap**. |
 
 ---
@@ -1963,7 +1964,7 @@ if (process.env.NODE_ENV === 'production') {
 
 ## 23. Complete Testing Strategy & Quality Assurance Architecture
 
-A reliable software engineering project guarantees correctness through automated testing rather than manual point-and-click verification. The Namlatic Hotel project maintains **512 passing automated tests** across the entire stack.
+A reliable software engineering project guarantees correctness through automated testing rather than manual point-and-click verification. The Namlatic Hotel project maintains **567 passing automated tests** across the entire stack.
 
 ```
                   +-----------------------------------+
@@ -1974,15 +1975,15 @@ A reliable software engineering project guarantees correctness through automated
                                     |
                          +----------+----------+
                          |  Integration Tests  |
-                         |  (118 Tests Passing)|
+                         |  (156 Tests Passing)|
                          | - PostgreSQL DB     |
                          | - Express API Routes|
                          +----------+----------+
                                     |
                +--------------------+--------------------+
                |                Unit Tests               |
-               |            (394 Tests Passing)          |
-               | - 255 Backend Unit Tests (node:test)    |
+               |            (411 Tests Passing)          |
+               | - 272 Backend Unit Tests (node:test)    |
                | - 139 Frontend Unit Tests (Vitest + RTL)|
                +-----------------------------------------+
 ```
@@ -1990,17 +1991,17 @@ A reliable software engineering project guarantees correctness through automated
 ---
 
 ### 23.1 Test Suite Breakdown & Verification Metrics
-The repository currently maintains **512 passing automated tests**:
+The repository currently maintains **567 passing automated tests**:
 
 ```
 +---------------------------------------------------------------------------------+
 | Test Classification      | Framework / Runner           | Passing Test Count   |
 +--------------------------+------------------------------+----------------------+
-| Backend Unit Tests       | Node.js Native (node:test)   | 255 Passing          |
-| Backend Integration Tests| Dedicated namlatic_hotel_test| 118 Passing          |
+| Backend Unit Tests       | Node.js Native (node:test)   | 272 Passing          |
+| Backend Integration Tests| Dedicated namlatic_hotel_test| 156 Passing          |
 | Frontend Unit Tests      | Vitest + RTL                 | 139 Passing          |
 +--------------------------+------------------------------+----------------------+
-| TOTAL PASSING TESTS      | Complete Project Test Suite  | 512 PASSING (100%)   |
+| TOTAL PASSING TESTS      | Complete Project Test Suite  | 567 PASSING (100%)   |
 +--------------------------+------------------------------+----------------------+
 ```
 
@@ -2400,7 +2401,8 @@ Software engineering is an iterative journey of continuous refinement, automated
 | Phase 5A-5C: Server-Side Filtering, Text Search Indexes, Pagination, Automated Test Expansion (340 tests)|
 | Phase 5D-5E: Cloudflare R2 Storage Adapter, Compensating Rollbacks, Strict VITE_API_URL Safety Rules    |
 | Phase 5F   : Owner Authentication Architecture (5F-A1), Database Schema & Argon2id (5F-A2.1),          |
-|              Integration Safety (5F-A2.1.1/2), Sessions & API Route Protection (5F-A2.2, 512 tests)     |
+|              Integration Safety (5F-A2.1.1/2), Sessions & API Route Protection (5F-A2.2),               |
+|              Backend Security Audit & Authentication Hardening (5F-A2.3, 567 tests)                     |
 +---------------------------------------------------------------------------------------------------------+
 ```
 
@@ -2513,7 +2515,14 @@ Software engineering is an iterative journey of continuous refinement, automated
 - **Objective:** Implement full backend owner authentication, PostgreSQL-backed session lifecycle management, tokenless CSRF defense, constant-time proxy secret verification, and lock down all hotel CRUD routes.
 - **Key Files:** `server/src/services/session.service.js`, `server/src/services/loginThrottler.service.js`, `server/src/middleware/auth.middleware.js`, `server/src/middleware/csrf.middleware.js`, `server/src/middleware/proxySecret.middleware.js`, `server/src/controllers/auth.controller.js`, `server/src/routes/auth.routes.js`, `server/src/routes/hotel.routes.js`, `client/vercel.json`, `server/tests/integration/auth.api.test.js`.
 - **Technical Hurdles Overcome:** Enforced `__Host-namlatic_session` cookie specification (`Path=/`, `HttpOnly`, `SameSite=Lax`, `Secure` in production); 256-bit cryptographically random tokens stored only as SHA-256 hashes; sliding 2-hour idle expiration with 5-minute database write throttle; constant-time proxy secret verification using dual-secret SHA-256 hashing; dummy hash timing equalization for non-existent users; bounded semaphore concurrency for Argon2id; tokenless CSRF defense combining `X-Requested-With`, `Sec-Fetch-Site`, and Origin/Referer verification; and complete protection of all hotel inventory endpoints while maintaining public health probes.
-- **Current Milestone:** **512 passing automated tests (255 backend unit, 118 backend integration, 139 frontend unit).**
+
+---
+
+### Phase 5F-A2.3: Backend Security Audit, Authentication Hardening & Final Verification
+- **Objective:** Perform a rigorous, adversarial security audit across all authentication, session management, CSRF defense, and route protection modules; resolve confirmed vulnerabilities; and verify 100% route protection across a 6x6 adversarial matrix.
+- **Key Files:** `server/src/utils/cookieHelper.js`, `server/src/middleware/auth.middleware.js`, `server/src/middleware/proxySecret.middleware.js`, `server/src/middleware/csrf.middleware.js`, `server/src/services/session.service.js`, `server/tests/helpers/testDb.js`, `server/tests/integration/auth.api.test.js`, `docs/security/PHASE_5F_A2_3_BACKEND_SECURITY_AUDIT.md`.
+- **Technical Hurdles Overcome:** Fixed health probe method bypass by strictly restricting probe exemptions to `GET` and `HEAD` methods; enforced RFC 6265bis `__Host-` cookie attributes while providing an explicit, safe development plain-HTTP fallback (`COOKIE_PLAIN_HTTP=true`) that is strictly ignored and rejected in production; normalized and allowlisted `Sec-Fetch-Site` metadata; mitigated race conditions during sliding idle refresh via `WHERE id = $5 AND revoked_at IS NULL`; and verified dedicated test database role least privileges (`pg_roles` checking `rolsuper=false, rolcreatedb=false, rolcreaterole=false`) at runtime.
+- **Current Milestone:** **567 passing automated tests (272 backend unit, 156 backend integration, 139 frontend unit).**
 
 ---
 
@@ -2923,7 +2932,7 @@ Presenting technical projects clearly and persuasively is a core skill evaluated
 ---
 
 ### 28.1 The 30-Second Elevator Pitch
-> *"I built the Namlatic Hotel Owner Portal—a production-grade PERN stack application for hospitality management. It features a React 18 and Redux Toolkit frontend with interactive Leaflet mapping, connected to a hardened Node.js and Express backend. We chose native parameterized SQL with PostgreSQL rather than an ORM, giving us complete control over query plans, B-tree pattern indexes, and transaction boundaries. The platform is backed by 512 passing automated tests, a zero-egress Cloudflare R2 storage adapter, and a hardened Argon2id session authentication architecture."*
+> *"I built the Namlatic Hotel Owner Portal—a production-grade PERN stack application for hospitality management. It features a React 18 and Redux Toolkit frontend with interactive Leaflet mapping, connected to a hardened Node.js and Express backend. We chose native parameterized SQL with PostgreSQL rather than an ORM, giving us complete control over query plans, B-tree pattern indexes, and transaction boundaries. The platform is backed by 567 passing automated tests, a zero-egress Cloudflare R2 storage adapter, and a hardened Argon2id session authentication architecture."*
 
 ---
 
@@ -2936,7 +2945,7 @@ Presenting technical projects clearly and persuasively is a core skill evaluated
 >
 > *For media, the application uses an enterprise storage abstraction supporting both local disk for development and Cloudflare R2 for zero-egress production deployments, complete with compensating transaction rollbacks to prevent orphaned files.*
 >
-> *The entire codebase is verified by 512 automated unit and integration tests across dedicated databases, adheres to Twelve-Factor App principles, and features an owner authentication architecture using Argon2id, PostgreSQL-backed sessions, timing-safe proxy secrets, and tokenless CSRF defense."*
+> *The entire codebase is verified by 567 automated unit and integration tests across dedicated databases, adheres to Twelve-Factor App principles, and features an owner authentication architecture using Argon2id, PostgreSQL-backed sessions, timing-safe proxy secrets, and tokenless CSRF defense."*
 
 ---
 
@@ -2953,7 +2962,7 @@ Presenting technical projects clearly and persuasively is a core skill evaluated
 >
 > *Fourth, Media and Distributed Consistency: File uploads are validated at the binary level using magic-byte inspection to prevent MIME spoofing. Because cloud object storage and PostgreSQL do not share atomic Two-Phase Commit transactions, our service layer implements compensating transactions: if a database insert fails after an image upload, the orphaned cloud asset is automatically purged.*
 >
-> *Finally, Quality Assurance: The project maintains 512 passing automated tests. We achieved total test isolation by creating a dedicated `namlatic_hotel_test` database harness that tracks generated primary keys and cleans up fixtures without destructive broad deletions.*
+> *Finally, Quality Assurance: The project maintains 567 passing automated tests. We achieved total test isolation by creating a dedicated `namlatic_hotel_test` database harness that tracks generated primary keys and cleans up fixtures without destructive broad deletions.*
 >
 > *In summary, this project represents production-grade full-stack engineering with deep attention to security, database internals, and distributed reliability."*
 
@@ -2988,7 +2997,7 @@ When presenting the live application in an interview or technical screening, fol
 
 5. **Step 5: Codebase Architecture & Automated Test Suite (60 seconds)**
    - *Action:* Switch to VS Code terminal. Execute `npm test`.
-   - *Voiceover:* *"To demonstrate our quality engineering standards, let's run the test suite. We have 512 passing automated tests: 255 backend unit tests, 118 database integration tests running on a dedicated test database, and 139 frontend tests running in Vitest. Everything passes with zero warnings."*
+   - *Voiceover:* *"To demonstrate our quality engineering standards, let's run the test suite. We have 567 passing automated tests: 272 backend unit tests, 156 database integration tests running on a dedicated test database, and 139 frontend tests running in Vitest. Everything passes with zero warnings."*
 
 ---
 
@@ -3014,7 +3023,7 @@ In modern interviews, candidates are often asked about AI coding assistants. An 
 > *My role was the Lead Architect, Security Auditor, and Decision Maker:*
 > 1. *I made all architectural decisions: selecting native parameterized SQL over ORMs, designing the Vercel Same-Origin API Proxy, and choosing Argon2id for password cryptography.*
 > 2. *I caught critical bugs that AI tools generated: for example, when an AI-generated integration test executed `DELETE FROM users WHERE role = 'owner'` against the main database, I identified the severe data loss risk and architected our isolated `namlatic_hotel_test` harness with tracked ID cleanup.*
-> 3. *I verified all 512 automated test cases, audited edge-case boundaries, and inspected SQL execution plans.*
+> 3. *I verified all 567 automated test cases, audited edge-case boundaries, and inspected SQL execution plans.*
 >
 > *AI allowed me to accelerate boilerplate generation and explore edge cases rapidly, but the system design, security auditing, and verification were entirely driven by my engineering discipline."*
 
@@ -3027,7 +3036,7 @@ In modern interviews, candidates are often asked about AI coding assistants. An 
 ### Category 1: Project Architecture & Full-Stack Fundamentals
 
 #### Q1: Can you walk me through the architecture of the Namlatic Hotel Portal?
-**Answer:** The application follows a decoupled PERN stack architecture. The frontend is a React 18 Single Page Application built with Vite and managed by Redux Toolkit. It communicates over RESTful JSON APIs with a stateless Node.js Express backend. The backend connects to a PostgreSQL 18 relational database via connection pooling (`pg.Pool`) and uses native parameterized SQL. Media assets are abstracted via a storage strategy supporting local disk in development and Cloudflare R2 in production. The entire application follows Twelve-Factor principles and is verified by 512 automated tests.
+**Answer:** The application follows a decoupled PERN stack architecture. The frontend is a React 18 Single Page Application built with Vite and managed by Redux Toolkit. It communicates over RESTful JSON APIs with a stateless Node.js Express backend. The backend connects to a PostgreSQL 18 relational database via connection pooling (`pg.Pool`) and uses native parameterized SQL. Media assets are abstracted via a storage strategy supporting local disk in development and Cloudflare R2 in production. The entire application follows Twelve-Factor principles and is verified by 567 automated tests.
 
 #### Q2: What is the exact sequence of events when a user navigates to `/hotels` in their browser?
 **Answer:**
@@ -3175,9 +3184,9 @@ In modern interviews, candidates are often asked about AI coding assistants. An 
 ### Category 8: Testing, Quality Assurance & DevOps
 
 #### Q37: How many tests does your project have, and how are they divided?
-**Answer:** The project has **512 passing automated tests**:
-- 255 backend unit tests across 15 suites using Node's native `node:test` runner.
-- 118 backend integration tests across 3 suites executing against a dedicated PostgreSQL database (`namlatic_hotel_test`).
+**Answer:** The project has **567 passing automated tests**:
+- 272 backend unit tests across 15 suites using Node's native `node:test` runner.
+- 156 backend integration tests across 3 suites executing against a dedicated PostgreSQL database (`namlatic_hotel_test`).
 - 139 frontend unit and component tests across 11 suites using Vitest and React Testing Library.
 
 #### Q38: Why use Node's native `node:test` instead of Jest for backend testing?
@@ -3359,7 +3368,7 @@ If an interviewer asks an unexpected technical question you don't know the answe
 
 #### Question 1: "If you had to start this project over from scratch today, what one thing would you do differently?"
 **Strong Answer:**
-> *"If I were starting fresh today, I would adopt TypeScript across both the frontend and backend from Day 1. While JavaScript with JSDoc and strict validation gave us rapid prototyping velocity and our 512 automated tests provide strong regression protection, end-to-end TypeScript interfaces—sharing API request/response types between the Express controllers and the Redux store—would eliminate an entire class of runtime contract mismatches and provide even better compile-time guarantees."*
+> *"If I were starting fresh today, I would adopt TypeScript across both the frontend and backend from Day 1. While JavaScript with JSDoc and strict validation gave us rapid prototyping velocity and our 567 automated tests provide strong regression protection, end-to-end TypeScript interfaces—sharing API request/response types between the Express controllers and the Redux store—would eliminate an entire class of runtime contract mismatches and provide even better compile-time guarantees."*
 
 #### Question 2: "Tell me about a time you had a strong disagreement with a technical decision—how did you resolve it?"
 **Strong Answer:**
@@ -3374,7 +3383,7 @@ If an interviewer asks an unexpected technical question you don't know the answe
 > *"I treated the AI assistant strictly as a high-speed drafting tool, never as an autonomous authority. I maintained three non-negotiable verification gates:*
 > 1. *Independent Architectural Verification: Every architecture proposal was scrutinized against official documentation before implementation. For example, when an AI suggested using Next.js Edge Middleware for file proxying, I caught the mismatch immediately because our frontend is Vite + React, not Next.js, and rewrote the specification to use static Vercel route rewrites.*
 > 2. *Security and Data Safety Audits: When an AI-generated integration test introduced a query that executed `DELETE FROM users WHERE role = 'owner'` on the main database, I flagged the critical data loss vulnerability and replaced it with our isolated `namlatic_hotel_test` harness with tracked ID cleanup.*
-> 3. *Automated Test Verification: No code was accepted without automated test coverage. Today, our 512 passing unit and integration tests guarantee that every single component, route, and validator functions according to specification."*
+> 3. *Automated Test Verification: No code was accepted without automated test coverage. Today, our 567 passing unit and integration tests guarantee that every single component, route, and validator functions according to specification."*
 
 ---
 
@@ -3442,7 +3451,7 @@ Review this cheat sheet in the 15 minutes before your interview. It summarizes e
 ### Core Facts at a Glance
 - **Project Name:** Namlatic Hotel Owner Portal
 - **Stack:** PERN (PostgreSQL 18.6, Express.js 4.19, React 18.3, Node.js 18+)
-- **Test Baseline:** **512 Passing Tests** (255 backend unit, 118 backend integration on dedicated `namlatic_hotel_test`, 139 frontend unit in Vitest).
+- **Test Baseline:** **567 Passing Tests** (272 backend unit, 156 backend integration on dedicated `namlatic_hotel_test`, 139 frontend unit in Vitest).
 - **Git Branch:** `main` (Latest commit verified on GitHub).
 - **Storage:** Local disk in dev (`server/uploads/`); Cloudflare R2 adapter implemented for zero-egress production.
 - **Security:** Argon2id password verification, PostgreSQL session store (`__Host-namlatic_session`), timing-safe proxy secret (`x-vercel-proxy-secret`), tokenless CSRF defense, magic-byte inspection, parameterized SQL, Helmet HTTP headers, rate limiting.

@@ -38,13 +38,18 @@ function verifyTokenlessCsrf(req, res, next) {
   }
 
   // 2. Fetch Metadata defense (if present)
+  // Rejects cross-site requests and any unrecognized or unexpected fetch site metadata
   const secFetchSite = req.headers['sec-fetch-site'];
-  if (secFetchSite && secFetchSite === 'cross-site') {
-    return res.status(403).json({
-      status: 'error',
-      statusCode: 403,
-      message: 'Cross-site request forgery protection: cross-site fetch rejected.',
-    });
+  if (secFetchSite && typeof secFetchSite === 'string') {
+    const normalizedSite = secFetchSite.toLowerCase().trim();
+    const ALLOWED_FETCH_SITES = new Set(['same-origin', 'same-site', 'none']);
+    if (!ALLOWED_FETCH_SITES.has(normalizedSite)) {
+      return res.status(403).json({
+        status: 'error',
+        statusCode: 403,
+        message: 'Cross-site request forgery protection: untrusted fetch site metadata.',
+      });
+    }
   }
 
   // 3. Exact Origin & Referer validation

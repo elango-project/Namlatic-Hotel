@@ -95,6 +95,30 @@ describe('Integration Tests: Owner Authentication, Sessions & Route Protection (
       assert.equal(data.status, 'ready');
       assert.equal(data.database.connected, true);
     });
+
+    it('strictly rejects POST /api/health without proxy secret with HTTP 403', async () => {
+      const res = await fetch(`${BASE_URL}/health`, {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest', Origin: CORS_ORIGIN },
+      });
+      assert.equal(res.status, 403);
+    });
+
+    it('strictly rejects POST /api/ready without proxy secret with HTTP 403', async () => {
+      const res = await fetch(`${BASE_URL}/ready`, {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest', Origin: CORS_ORIGIN },
+      });
+      assert.equal(res.status, 403);
+    });
+
+    it('strictly rejects DELETE /api/health without proxy secret with HTTP 403', async () => {
+      const res = await fetch(`${BASE_URL}/health`, {
+        method: 'DELETE',
+        headers: { 'X-Requested-With': 'XMLHttpRequest', Origin: CORS_ORIGIN },
+      });
+      assert.equal(res.status, 403);
+    });
   });
 
   // ==========================================================================
@@ -112,6 +136,24 @@ describe('Integration Tests: Owner Authentication, Sessions & Route Protection (
       assert.equal(data.status, 'error');
       assert.equal(data.statusCode, 403);
       assert.match(data.message, /proxy secret/i);
+    });
+
+    it('rejects POST /api/auth/login with empty proxy secret with HTTP 403', async () => {
+      const res = await fetch(`${BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: makeHeaders({ secret: '' }),
+        body: JSON.stringify({ email: testOwnerUser.email, password: TEST_PASSWORD }),
+      });
+      assert.equal(res.status, 403);
+    });
+
+    it('rejects POST /api/auth/login with short proxy secret (1 char) with HTTP 403', async () => {
+      const res = await fetch(`${BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: makeHeaders({ secret: 'x' }),
+        body: JSON.stringify({ email: testOwnerUser.email, password: TEST_PASSWORD }),
+      });
+      assert.equal(res.status, 403);
     });
 
     it('rejects POST /api/auth/login with invalid proxy secret with HTTP 403', async () => {
@@ -185,7 +227,40 @@ describe('Integration Tests: Owner Authentication, Sessions & Route Protection (
       });
       assert.equal(res.status, 403);
       const data = await res.json();
-      assert.match(data.message, /cross-site/i);
+      assert.match(data.message, /fetch site metadata|cross-site/i);
+    });
+
+    it('rejects state-changing POST with unexpected Sec-Fetch-Site metadata with HTTP 403', async () => {
+      const res = await fetch(`${BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: makeHeaders({
+          extra: {
+            'Content-Type': 'application/json',
+            'Sec-Fetch-Site': 'unexpected-foreign-origin',
+          },
+        }),
+        body: JSON.stringify({ email: testOwnerUser.email, password: TEST_PASSWORD }),
+      });
+      assert.equal(res.status, 403);
+      const data = await res.json();
+      assert.match(data.message, /untrusted fetch site metadata/i);
+    });
+
+    it('rejects state-changing POST with malformed Referer URL with HTTP 403 (never HTTP 500)', async () => {
+      const res = await fetch(`${BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: makeHeaders({
+          origin: null,
+          extra: {
+            'Content-Type': 'application/json',
+            referer: 'http://[invalid-ipv6-or-malformed-url',
+          },
+        }),
+        body: JSON.stringify({ email: testOwnerUser.email, password: TEST_PASSWORD }),
+      });
+      assert.equal(res.status, 403);
+      const data = await res.json();
+      assert.match(data.message, /malformed referer/i);
     });
   });
 
@@ -464,10 +539,11 @@ describe('Integration Tests: Owner Authentication, Sessions & Route Protection (
   });
 
   // ==========================================================================
-  // 7. Complete Private Hotel Route Protection Matrix
+  // 7. Complete Private Hotel Route Protection Matrix (Exhaustive 6x6)
   // ==========================================================================
   describe('7. Route Protection: All Hotel Endpoints Require Authentication & Proxy Secret', () => {
     let validSessionToken = null;
+    let expiredSessionToken = null;
 
     before(async () => {
       const session = await sessionService.createSession(
@@ -475,6 +551,18 @@ describe('Integration Tests: Owner Authentication, Sessions & Route Protection (
         testPool
       );
       validSessionToken = session.rawToken;
+
+      // Create an expired session fixture
+      const expiredSession = await sessionService.createSession(
+        { userId: testOwnerUser.id, ipAddress: '127.0.0.1' },
+        testPool
+      );
+      expiredSessionToken = expiredSession.rawToken;
+      const expiredHash = sessionService.hashSessionToken(expiredSessionToken);
+      await testPool.query(
+        "UPDATE sessions SET created_at = NOW() - INTERVAL '8 days', expires_at = NOW() - INTERVAL '1 day', idle_expires_at = NOW() - INTERVAL '1 day' WHERE token_hash = $1",
+        [expiredHash]
+      );
     });
 
     const hotelEndpoints = [
@@ -487,28 +575,68 @@ describe('Integration Tests: Owner Authentication, Sessions & Route Protection (
     ];
 
     for (const ep of hotelEndpoints) {
-      it(`blocks unauthenticated ${ep.method} /api${ep.path} with HTTP 401 when session cookie is missing`, async () => {
+      it(`Matrix [Missing Secret / Missing Session]: ${ep.method} /api${ep.path} returns HTTP 403`, async () => {
         const res = await fetch(`${BASE_URL}${ep.path}`, {
           method: ep.method,
-          headers: makeHeaders({ token: null, extra: { 'Content-Type': 'application/json' } }),
-          body: ep.body ? JSON.stringify(ep.body) : undefined,
-        });
-        assert.equal(res.status, 401);
-        const data = await res.json();
-        assert.equal(data.status, 'error');
-        assert.equal(data.statusCode, 401);
-      });
-
-      it(`blocks direct ${ep.method} /api${ep.path} with HTTP 403 when x-vercel-proxy-secret is missing`, async () => {
-        const res = await fetch(`${BASE_URL}${ep.path}`, {
-          method: ep.method,
-          headers: makeHeaders({ secret: null, token: validSessionToken, extra: { 'Content-Type': 'application/json' } }),
+          headers: makeHeaders({ secret: null, token: null, extra: { 'Content-Type': 'application/json' } }),
           body: ep.body ? JSON.stringify(ep.body) : undefined,
         });
         assert.equal(res.status, 403);
-        const data = await res.json();
-        assert.equal(data.status, 'error');
-        assert.equal(data.statusCode, 403);
+      });
+
+      it(`Matrix [Invalid Secret / Valid Session]: ${ep.method} /api${ep.path} returns HTTP 403`, async () => {
+        const res = await fetch(`${BASE_URL}${ep.path}`, {
+          method: ep.method,
+          headers: makeHeaders({ secret: 'attacker_bad_secret_32_characters_long', token: validSessionToken, extra: { 'Content-Type': 'application/json' } }),
+          body: ep.body ? JSON.stringify(ep.body) : undefined,
+        });
+        assert.equal(res.status, 403);
+      });
+
+      it(`Matrix [Valid Secret / Missing Session]: ${ep.method} /api${ep.path} returns HTTP 401`, async () => {
+        const res = await fetch(`${BASE_URL}${ep.path}`, {
+          method: ep.method,
+          headers: makeHeaders({ secret: PROXY_SECRET, token: null, extra: { 'Content-Type': 'application/json' } }),
+          body: ep.body ? JSON.stringify(ep.body) : undefined,
+        });
+        assert.equal(res.status, 401);
+      });
+
+      it(`Matrix [Valid Secret / Invalid Session]: ${ep.method} /api${ep.path} returns HTTP 401`, async () => {
+        const res = await fetch(`${BASE_URL}${ep.path}`, {
+          method: ep.method,
+          headers: makeHeaders({ secret: PROXY_SECRET, token: 'totally_nonexistent_or_forged_session_token', extra: { 'Content-Type': 'application/json' } }),
+          body: ep.body ? JSON.stringify(ep.body) : undefined,
+        });
+        assert.equal(res.status, 401);
+      });
+
+      it(`Matrix [Valid Secret / Expired Session]: ${ep.method} /api${ep.path} returns HTTP 401`, async () => {
+        const res = await fetch(`${BASE_URL}${ep.path}`, {
+          method: ep.method,
+          headers: makeHeaders({ secret: PROXY_SECRET, token: expiredSessionToken, extra: { 'Content-Type': 'application/json' } }),
+          body: ep.body ? JSON.stringify(ep.body) : undefined,
+        });
+        assert.equal(res.status, 401);
+      });
+
+      it(`Matrix [Valid Secret / Valid Session]: ${ep.method} /api${ep.path} permits authenticated access (no 401/403)`, async () => {
+        const res = await fetch(`${BASE_URL}${ep.path}`, {
+          method: ep.method,
+          headers: makeHeaders({ secret: PROXY_SECRET, token: validSessionToken, extra: { 'Content-Type': 'application/json' } }),
+          body: ep.body ? JSON.stringify(ep.body) : undefined,
+        });
+        assert.notEqual(res.status, 401, `Expected ${ep.method} /api${ep.path} not to return 401 with valid session`);
+        assert.notEqual(res.status, 403, `Expected ${ep.method} /api${ep.path} not to return 403 with valid secret`);
+      });
+
+      it(`enforces private no-store Cache-Control header on ${ep.method} /api${ep.path}`, async () => {
+        const res = await fetch(`${BASE_URL}${ep.path}`, {
+          method: ep.method,
+          headers: makeHeaders({ secret: PROXY_SECRET, token: validSessionToken, extra: { 'Content-Type': 'application/json' } }),
+          body: ep.body ? JSON.stringify(ep.body) : undefined,
+        });
+        assert.equal(res.headers.get('cache-control')?.includes('no-store'), true);
       });
     }
 

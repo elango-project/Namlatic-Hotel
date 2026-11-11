@@ -906,3 +906,47 @@ Phase 5F-A2.2 completes backend authentication and route lockdown, guaranteeing 
 | 9 | `/api/hotels` | POST | Inventory | **Yes** | **Yes** | **Yes** | `private, no-store` |
 | 10 | `/api/hotels/:id` | PUT | Inventory | **Yes** | **Yes** | **Yes** | `private, no-store` |
 | 11 | `/api/hotels/:id` | DELETE | Inventory | **Yes** | **Yes** | **Yes** | `private, no-store` |
+
+---
+
+## 12. Backend Security Audit & Authentication Hardening (Phase 5F-A2.3)
+
+Phase 5F-A2.3 executed an in-depth adversarial audit and hardening pass over the entire backend authentication and route protection implementation.
+
+### 12.1 Strict RFC 6265bis `__Host-` Cookie Enforcement & Development Portability
+RFC 6265bis §5.4.1 dictates that cookies prefixed with `__Host-` MUST contain `Secure`, `Path=/`, and NO `Domain` attribute. Compliant browsers reject `__Host-` cookies on plain HTTP connections.
+- **Production Enforcement:** The server strictly uses `COOKIE_NAME = '__Host-namlatic_session'` with `Secure: true`, `HttpOnly: true`, `SameSite=Lax`, `Path=/`, and no `Domain`.
+- **Safe Development Fallback:** In non-production environments (`NODE_ENV !== 'production'`), developers can explicitly opt into `COOKIE_PLAIN_HTTP=true` (or `plainHttpDev: true`), which switches the cookie name to `DEV_COOKIE_NAME = 'namlatic_session'` without the `Secure` flag. In production, this fallback is strictly disabled and ignored, and `auth.middleware.js` rejects dev cookies with HTTP 401.
+
+### 12.2 Health Probe Method Bypass Restriction
+To prevent unauthenticated write or mutation operations via probe paths:
+- `proxySecret.middleware.js` inspects both the cleaned request path and `req.method`.
+- Exemption is strictly limited to `(req.method === 'GET' || req.method === 'HEAD')` for `/api/health` and `/api/ready`.
+- Any other HTTP method (e.g. `POST /api/health`, `DELETE /api/ready`) or unexpected subpath requires a valid `x-vercel-proxy-secret` and is rejected with HTTP 403 Forbidden.
+
+### 12.3 Fetch Metadata Normalization & Strict Site Allowlisting
+To prevent bypasses via uppercase or unexpected values:
+- `csrf.middleware.js` normalizes `Sec-Fetch-Site` using `.toLowerCase().trim()`.
+- Validates the header against a strict allowlist: `Set(['same-origin', 'same-site', 'none'])`.
+- Any request presenting `Sec-Fetch-Site: cross-site` or an unexpected value outside the allowlist is rejected with HTTP 403 Forbidden.
+
+### 12.4 Concurrent Revocation Race Condition Mitigation
+In `session.service.js`, the sliding idle refresh query was hardened to:
+```sql
+UPDATE sessions
+SET last_active_at = $1, idle_expires_at = $2, ip_address = $3, user_agent = $4
+WHERE id = $5 AND revoked_at IS NULL
+RETURNING id;
+```
+If another transaction concurrently revoked the session while the idle update was in flight (`updateResult.rowCount === 0`), `validateSession` immediately detects this and returns `null`.
+
+### 12.5 Runtime Verification of Dedicated Test Database Role Privileges
+In `testDb.js`, integration test preflight executes:
+```sql
+SELECT rolname, rolsuper, rolcreatedb, rolcreaterole
+FROM pg_roles
+WHERE rolname = current_user;
+```
+This guarantees that the connected test database user (`namlatic_test`) has `rolsuper=false`, `rolcreatedb=false`, and `rolcreaterole=false` before any test runs.
+
+*For full audit logs, attack scenarios, and remediation details, see the [Phase 5F-A2.3 Backend Security Audit Report](security/PHASE_5F_A2_3_BACKEND_SECURITY_AUDIT.md).*

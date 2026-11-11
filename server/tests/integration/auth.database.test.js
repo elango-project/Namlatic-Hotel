@@ -1,7 +1,7 @@
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
-const { getTestPool, closeTestPool } = require('../helpers/testDb');
+const { getTestPool, closeTestPool, verifyTestRolePrivileges } = require('../helpers/testDb');
 const { setPool, resetPool } = require('../../src/config/db');
 const { runMigrations, MIGRATION_ADVISORY_LOCK_ID } = require('../../src/database/migrate');
 const { bootstrapOwner } = require('../../src/scripts/bootstrap-owner');
@@ -18,10 +18,13 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
     testPool = getTestPool();
     setPool(testPool);
 
-    // 2. Run migrations on test database
+    // 2. Enforce runtime least-privilege preflight verification on the connected role
+    await verifyTestRolePrivileges(testPool);
+
+    // 3. Run migrations on test database
     await runMigrations(testPool);
 
-    // 3. Record baseline hotel count to ensure zero data loss or modification
+    // 4. Record baseline hotel count to ensure zero data loss or modification
     const countRes = await testPool.query('SELECT COUNT(*) FROM hotels;');
     initialHotelCount = parseInt(countRes.rows[0].count, 10);
   });
@@ -497,6 +500,19 @@ describe('Integration Tests: Authentication Schema, Migrations & CLI Tools (Phas
       const res = await resetOwnerPassword({ newPassword: 'AnyValidPassword12345!', pool: testPool });
       assert.equal(res.status, 'not_found');
       assert.equal(res.reset, false);
+    });
+  });
+
+  // ==========================================================================
+  // 7. Test Database Role Least-Privilege Verification (pg_roles)
+  // ==========================================================================
+  describe('Test Database Role Least-Privilege Verification (pg_roles)', () => {
+    it('verifies that the connected test database role has rolsuper=false, rolcreatedb=false, rolcreaterole=false in pg_roles', async () => {
+      const roleInfo = await verifyTestRolePrivileges(testPool);
+      assert.equal(roleInfo.rolname, 'namlatic_test');
+      assert.equal(roleInfo.rolsuper, false);
+      assert.equal(roleInfo.rolcreatedb, false);
+      assert.equal(roleInfo.rolcreaterole, false);
     });
   });
 });

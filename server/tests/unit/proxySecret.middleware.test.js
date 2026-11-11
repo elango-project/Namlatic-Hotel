@@ -53,7 +53,7 @@ describe('Unit Tests: Internal Reverse Proxy Secret Middleware (Phase 5F-A2.2)',
 
     it('exempts health probe /api/health and /health without requiring secret', () => {
       let nextCalled = false;
-      const req = { path: '/health', originalUrl: '/api/health', headers: {} };
+      const req = { method: 'GET', path: '/health', originalUrl: '/api/health', headers: {} };
       const res = createMockRes();
 
       verifyProxySecret(req, res, () => {
@@ -66,7 +66,7 @@ describe('Unit Tests: Internal Reverse Proxy Secret Middleware (Phase 5F-A2.2)',
 
     it('exempts readiness probe /api/ready and /ready without requiring secret', () => {
       let nextCalled = false;
-      const req = { path: '/ready', originalUrl: '/api/ready', headers: {} };
+      const req = { method: 'GET', path: '/ready', originalUrl: '/api/ready', headers: {} };
       const res = createMockRes();
 
       verifyProxySecret(req, res, () => {
@@ -75,6 +75,79 @@ describe('Unit Tests: Internal Reverse Proxy Secret Middleware (Phase 5F-A2.2)',
 
       assert.equal(nextCalled, true);
       assert.equal(res.statusCode, 200);
+    });
+
+    it('exempts health probes with query strings (e.g. /api/health?format=json)', () => {
+      let nextCalled = false;
+      const req = { method: 'GET', path: '/health', originalUrl: '/api/health?format=json', headers: {} };
+      const res = createMockRes();
+
+      verifyProxySecret(req, res, () => {
+        nextCalled = true;
+      });
+
+      assert.equal(nextCalled, true);
+      assert.equal(res.statusCode, 200);
+    });
+
+    it('strictly denies exemption for POST /api/health without proxy secret (HTTP 403)', () => {
+      let nextCalled = false;
+      const req = { method: 'POST', path: '/health', originalUrl: '/api/health', headers: {} };
+      const res = createMockRes();
+
+      verifyProxySecret(req, res, () => {
+        nextCalled = true;
+      });
+
+      assert.equal(nextCalled, false);
+      assert.equal(res.statusCode, 403);
+      assert.equal(res.body.message.includes('missing or invalid proxy secret'), true);
+    });
+
+    it('strictly denies exemption for DELETE /api/ready without proxy secret (HTTP 403)', () => {
+      let nextCalled = false;
+      const req = { method: 'DELETE', path: '/ready', originalUrl: '/api/ready', headers: {} };
+      const res = createMockRes();
+
+      verifyProxySecret(req, res, () => {
+        nextCalled = true;
+      });
+
+      assert.equal(nextCalled, false);
+      assert.equal(res.statusCode, 403);
+    });
+
+    it('strictly denies exemption for unexpected subpath /api/health/status (HTTP 403)', () => {
+      let nextCalled = false;
+      const req = { method: 'GET', path: '/health/status', originalUrl: '/api/health/status', headers: {} };
+      const res = createMockRes();
+
+      verifyProxySecret(req, res, () => {
+        nextCalled = true;
+      });
+
+      assert.equal(nextCalled, false);
+      assert.equal(res.statusCode, 403);
+    });
+
+    it('rejects empty proxy secret header with HTTP 403', () => {
+      let nextCalled = false;
+      const req = {
+        method: 'GET',
+        path: '/hotels',
+        originalUrl: '/api/hotels',
+        headers: {
+          'x-vercel-proxy-secret': '',
+        },
+      };
+      const res = createMockRes();
+
+      verifyProxySecret(req, res, () => {
+        nextCalled = true;
+      });
+
+      assert.equal(nextCalled, false);
+      assert.equal(res.statusCode, 403);
     });
 
     it('rejects state-changing and read requests missing x-vercel-proxy-secret with HTTP 403', () => {

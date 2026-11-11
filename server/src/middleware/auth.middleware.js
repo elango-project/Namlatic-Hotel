@@ -6,8 +6,9 @@
  * Injects strict cache-prevention headers to prevent intermediate proxy/edge caching.
  */
 
+const env = require('../config/env');
 const sessionService = require('../services/session.service');
-const { parseCookies, COOKIE_NAME } = require('../utils/cookieHelper');
+const { parseCookies, COOKIE_NAME, DEV_COOKIE_NAME } = require('../utils/cookieHelper');
 
 const NO_CACHE_VALUE = 'private, no-store, no-cache, max-age=0, must-revalidate';
 
@@ -19,7 +20,10 @@ async function requireAuth(req, res, next) {
   res.setHeader('Cache-Control', NO_CACHE_VALUE);
 
   const cookies = parseCookies(req.headers.cookie);
-  const rawToken = cookies[COOKIE_NAME];
+  // Production strictly enforces the __Host- prefix. Non-production allows dev fallback cookie name.
+  const rawToken = env.nodeEnv === 'production'
+    ? cookies[COOKIE_NAME]
+    : (cookies[COOKIE_NAME] || cookies[DEV_COOKIE_NAME]);
 
   if (!rawToken) {
     return res.status(401).json({

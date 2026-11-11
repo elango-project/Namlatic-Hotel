@@ -40,8 +40,12 @@ function timingSafeSecretCompare(secretA, secretB) {
  * Express middleware to verify incoming reverse-proxy secrets.
  */
 function verifyProxySecret(req, res, next) {
-  // 1. Check narrow health probe exemption
-  if (EXEMPT_PATHS.has(req.path) || EXEMPT_PATHS.has(req.originalUrl)) {
+  // 1. Check narrow health probe exemption: strictly GET or HEAD on /health or /ready
+  const isProbeMethod = req.method === 'GET' || req.method === 'HEAD';
+  const cleanPath = (req.path || '').split('?')[0];
+  const cleanOriginalUrl = (req.originalUrl || '').split('?')[0];
+
+  if (isProbeMethod && (EXEMPT_PATHS.has(cleanPath) || EXEMPT_PATHS.has(cleanOriginalUrl))) {
     return next();
   }
 

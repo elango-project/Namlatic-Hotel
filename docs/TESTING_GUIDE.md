@@ -71,7 +71,7 @@ Built entirely using Node.js's built-in `node:test` framework to avoid bloating 
    - Unicode code point backspace: Accurately removes multibyte Unicode emojis code point by code point.
    - Signal handling & cleanup: Restores terminal raw mode and rejects with `USER_CANCELLED` error code on Ctrl+C (`\u0003`).
    - Non-TTY fallback: Falls back cleanly to line reading when input stream is not a TTY (supporting automated CI/CD and piped inputs).
-9. **`testDb.config.test.js` (22 tests - Phase 5F-A2.1.1 & Phase 5F-A2.1.2):**
+9. **`testDb.config.test.js` (27 tests - Phases 5F-A2.1.1, 5F-A2.1.2, 5F-A2.3):**
    - Immediate rejection if `NODE_ENV === 'production'`.
    - Rejection when `TEST_DATABASE_URL` is missing or whitespace only.
    - Rejection of malformed URLs and non-PostgreSQL protocols (`mysql:`, `http:`).
@@ -81,35 +81,39 @@ Built entirely using Node.js's built-in `node:test` framework to avoid bloating 
    - Safety checks rejecting protected databases (`namlatic_hotel`, `postgres`, `production`, `neondb`), non-test database names, and names that do not match exact expected test database (`namlatic_hotel_test` or `TEST_DB_NAME`).
    - Explicit allowed-host enforcement rejecting unauthorized remote hosts while supporting custom CI hosts via `TEST_DB_ALLOWED_HOSTS`.
    - Successful validation and extraction of sanitized test database metadata (name, host, test role).
-10. **`cookieHelper.test.js` (16 tests - Phase 5F-A2.2):**
+   - Runtime role privilege verification (`verifyTestRolePrivileges`): Queries PostgreSQL catalog `pg_roles` at runtime to ensure `rolsuper=false`, `rolcreatedb=false`, and `rolcreaterole=false`.
+10. **`cookieHelper.test.js` (18 tests - Phases 5F-A2.2 & 5F-A2.3):**
     - `parseCookies`: Handles falsy, non-string, single, multiple, quoted values, URI decoding, and malformed encoding.
     - `sanitizeIp`: Validates IPv4, IPv6, IPv4-mapped IPv6, and returns null for non-IP strings, port-appended IPs, or injection attempts.
     - `truncateUserAgent`: Preserves <= 512 chars, truncates > 512 chars, and handles non-string values.
-    - Cookie header builders: Verifies `__Host-` prefix rules (Path=/, no Domain, HttpOnly, SameSite=Lax, Secure in production).
-11. **`proxySecret.middleware.test.js` (10 tests - Phase 5F-A2.2):**
+    - Cookie header builders & RFC 6265bis: Verifies `__Host-` prefix rules (Path=/, no Domain, HttpOnly, SameSite=Lax, Secure in production and HTTPS development).
+    - Safe plain-HTTP dev fallback: Verifies `getSessionCookieName` and `buildSessionCookie` select `namlatic_session` without Secure when `plainHttpDev: true` is explicitly configured outside production.
+11. **`proxySecret.middleware.test.js` (15 tests - Phases 5F-A2.2 & 5F-A2.3):**
     - `timingSafeSecretCompare`: Constant-time comparison of matching secrets, rejection of differing secrets of same or different lengths without throwing.
-    - `verifyProxySecret`: Narrow probe exemption (`/health`, `/ready`), rejection of missing or invalid `x-vercel-proxy-secret` (HTTP 403), acceptance of current secret and old secret during rotation.
-12. **`csrf.middleware.test.js` (12 tests - Phase 5F-A2.2):**
+    - `verifyProxySecret`: Narrow probe exemption strictly limited to GET and HEAD on `/health` and `/ready`, query string normalization, strict 403 rejection of non-GET methods (`POST /api/health`, `DELETE /api/ready`) and subpaths without proxy secret, rejection of missing or invalid `x-vercel-proxy-secret` (HTTP 403), acceptance of current secret and old secret during rotation.
+12. **`csrf.middleware.test.js` (16 tests - Phases 5F-A2.2 & 5F-A2.3):**
     - Safe HTTP methods bypass (`GET`, `HEAD`, `OPTIONS`).
     - Custom header enforcement: Missing or invalid `X-Requested-With` rejected with HTTP 403; case-insensitive `XMLHttpRequest` accepted.
-    - Fetch Metadata defense: Rejection of `Sec-Fetch-Site: cross-site`.
+    - Fetch Metadata defense: Rejection of `Sec-Fetch-Site: cross-site`, lowercase normalization, and rejection of unexpected metadata values with HTTP 403.
     - Origin & Referer validation: Rejection of `Origin: null`, rejection of untrusted origin, acceptance of trusted origin in `env.corsOrigins`, safe Referer fallback, and safe 403 rejection on malformed Referer (never HTTP 500).
-13. **`auth.middleware.test.js` (4 tests - Phase 5F-A2.2):**
+13. **`auth.middleware.test.js` (6 tests - Phases 5F-A2.2 & 5F-A2.3):**
     - Cache prevention header: Injects `Cache-Control: private, no-store, no-cache, max-age=0, must-revalidate` unconditionally.
-    - Missing cookie rejection: HTTP 401 when `__Host-namlatic_session` is absent.
+    - Missing cookie rejection: HTTP 401 when session cookie is absent.
     - Invalid session rejection: HTTP 401 when token is invalid or expired.
     - Profile attachment: Populates `req.user`, `req.sessionId`, `req.rawSessionToken` on valid session.
-14. **`loginThrottler.test.js` (7 tests - Phase 5F-A2.2):**
+    - Environment cookie differentiation: Strictly rejects plain-HTTP dev cookie in production; accepts dev cookie in development mode.
+14. **`loginThrottler.test.js` (15 tests - Phase 5F-A2.2):**
     - IP Rate Limiting: Blocks IP after 5 failed attempts with HTTP 429 and `retryAfter`.
     - No Global Lockout: Legitimate owner from independent IP is never blocked by attacks on other IPs.
     - Progressive Delays: 0ms for attempts 1-2, 1000ms for attempt 3, 2000ms for attempts 4-5+.
     - Reset on success: Clears IP and pair records upon successful authentication.
     - Bounded LRU store & Memory Benchmark: 10,000 entry limit, evicts oldest entry, and heap benchmark asserts < 25 MB growth under 10,000 entries.
-15. **`session.service.test.js` (7 tests - Phase 5F-A2.2):**
+15. **`session.service.test.js` (10 tests - Phases 5F-A2.2 & 5F-A2.3):**
     - Security Lifecycles: 7-day hard absolute lifetime (`expires_at`), 2-hour sliding idle timeout (`idle_expires_at`), 5-minute sliding refresh throttle (`REFRESH_THROTTLE_MS`).
     - Token generation: Generates 256-bit (64 hex characters) cryptographically secure random tokens.
     - Token hashing: Consistent lowercase SHA-256 hex digest, raw token never stored in database.
     - Input validation: Safe rejection of null/non-string tokens without throwing.
+    - Race condition protection: Detects concurrent session revocation during sliding idle update and returns null.
 
 ---
 
@@ -314,7 +318,7 @@ Built using **Vitest** + **React Testing Library** + **@testing-library/jest-dom
 
 ## 5. Running the Tests
 
-### Backend Tests (373 tests):
+### Backend Tests (428 tests):
 From the `server` directory:
 ```powershell
 # Run all backend tests (Unit tests + Integration tests)
@@ -338,10 +342,10 @@ npm run test:watch
 ```
 
 ### Total Test Suite Count:
-- **Backend Unit Tests:** 255 passed (15 test suites)
-- **Backend Integration Tests:** 118 passed (63 hotel API + 17 auth/migrations + 38 auth API)
+- **Backend Unit Tests:** 272 passed (15 test suites)
+- **Backend Integration Tests:** 156 passed (63 hotel API + 18 auth/migrations + 75 auth API)
 - **Frontend Unit Tests:** 139 passed (11 test suites)
-- **Total Automated Tests:** **512 / 512 passed (100% pass rate)**
+- **Total Automated Tests:** **567 / 567 passed (100% pass rate)**
 
 ---
 

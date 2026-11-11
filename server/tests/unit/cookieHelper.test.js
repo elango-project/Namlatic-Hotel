@@ -2,7 +2,9 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   COOKIE_NAME,
+  DEV_COOKIE_NAME,
   SESSION_MAX_AGE_SECONDS,
+  getSessionCookieName,
   parseCookies,
   sanitizeIp,
   truncateUserAgent,
@@ -100,37 +102,53 @@ describe('Unit Tests: Cookie & Header Utilities (Phase 5F-A2.2)', () => {
     });
   });
 
-  describe('Cookie Header Builders', () => {
-    it('buildSessionCookie adheres to __Host- specifications', () => {
+  describe('Cookie Header Builders & Environment Isolation', () => {
+    it('getSessionCookieName returns __Host- in production and namlatic_session in development', () => {
+      assert.equal(getSessionCookieName(true), '__Host-namlatic_session');
+      assert.equal(getSessionCookieName(false), 'namlatic_session');
+    });
+
+    it('buildSessionCookie strictly adheres to __Host- specifications in production', () => {
       const token = 'abcdef1234567890abcdef1234567890';
-      const cookie = buildSessionCookie(token, { isProduction: false });
+      const cookie = buildSessionCookie(token, { isProduction: true });
 
       assert.equal(cookie.includes(`${COOKIE_NAME}=${token}`), true);
       assert.equal(cookie.includes('Path=/'), true);
       assert.equal(cookie.includes('HttpOnly'), true);
       assert.equal(cookie.includes('SameSite=Lax'), true);
       assert.equal(cookie.includes(`Max-Age=${SESSION_MAX_AGE_SECONDS}`), true);
-      assert.equal(cookie.includes('Domain'), false); // __Host- cookies must not specify Domain
-      assert.equal(cookie.includes('Secure'), false); // Development without Secure
+      assert.equal(cookie.includes('Domain'), false); // RFC 6265bis: __Host- cookies must not specify Domain
+      assert.equal(cookie.includes('Secure'), true); // RFC 6265bis: __Host- cookies MUST specify Secure
     });
 
-    it('buildSessionCookie includes Secure flag when isProduction is true', () => {
-      const token = 'securetoken123';
-      const cookie = buildSessionCookie(token, { isProduction: true });
+    it('buildSessionCookie defaults to __Host- with Secure in standard/secure development', () => {
+      const token = 'localhostsecuretoken';
+      const cookie = buildSessionCookie(token, { isProduction: false });
 
+      assert.equal(cookie.includes(`${COOKIE_NAME}=${token}`), true);
       assert.equal(cookie.includes('Secure'), true);
       assert.equal(cookie.includes('HttpOnly'), true);
-      assert.equal(cookie.includes('SameSite=Lax'), true);
     });
 
-    it('buildClearSessionCookie clears cookie with Max-Age=0 and past Expires date', () => {
-      const cookie = buildClearSessionCookie({ isProduction: true });
+    it('buildSessionCookie uses non-prefixed cookie in plain-HTTP development when explicitly opted in', () => {
+      const token = 'devtoken12345';
+      const cookie = buildSessionCookie(token, { isProduction: false, plainHttpDev: true });
 
-      assert.equal(cookie.includes(`${COOKIE_NAME}=;`), true);
+      assert.equal(cookie.includes(`${DEV_COOKIE_NAME}=${token}`), true);
+      assert.equal(cookie.includes('__Host-'), false);
+      assert.equal(cookie.includes('Path=/'), true);
+      assert.equal(cookie.includes('HttpOnly'), true);
+      assert.equal(cookie.includes('SameSite=Lax'), true);
+      assert.equal(cookie.includes('Secure'), false); // Plain HTTP dev omits Secure safely
+    });
+
+    it('buildClearSessionCookie clears development cookie when plainHttpDev is true', () => {
+      const cookie = buildClearSessionCookie({ isProduction: false, plainHttpDev: true });
+
+      assert.equal(cookie.includes(`${DEV_COOKIE_NAME}=;`), true);
       assert.equal(cookie.includes('Max-Age=0'), true);
       assert.equal(cookie.includes('Expires=Thu, 01 Jan 1970 00:00:00 GMT'), true);
-      assert.equal(cookie.includes('Path=/'), true);
-      assert.equal(cookie.includes('Secure'), true);
+      assert.equal(cookie.includes('Secure'), false);
     });
   });
 });

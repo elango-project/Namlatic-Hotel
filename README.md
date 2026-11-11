@@ -152,10 +152,10 @@ namlatic-hotel-portal/
 
 ## 5. Running Automated Tests
 
-The test suite includes **402 automated tests** across the entire full-stack architecture:
-- **Backend Unit Tests:** 183 passed (`node:test`)
-- **Backend Integration Tests:** 80 passed (HTTP + Live PostgreSQL 18.6: 17 auth/migration tests + 63 hotel API tests)
-- **Frontend Unit Tests:** 139 passed (Vitest + React Testing Library)
+The test suite includes **567 automated tests** across the entire full-stack architecture:
+- **Backend Unit Tests:** 272 passed (`node:test`, 15 test suites)
+- **Backend Integration Tests:** 156 passed (HTTP + Live PostgreSQL 18.6: 18 auth database tests + 75 auth API tests + 63 hotel API tests)
+- **Frontend Unit Tests:** 139 passed (Vitest + React Testing Library, 11 test suites)
 
 ```powershell
 # 1. Run all backend tests (server directory)
@@ -216,7 +216,7 @@ npm test
 - [x] **Phase 5F-A2.1.1: Authentication Infrastructure Safety Corrections** (Dedicated `TEST_DATABASE_URL` test isolation, runtime safety guards rejecting production and non-test databases, temporary test record ID tracking eliminating broad owner deletions, native TTY masked input tooling with raw mode and Unicode backspace support, pre-semaphore 128-byte limit enforcement in `verifyPassword`, incremental migration `003_correct_session_expiry_indexes.sql` creating separate B-tree indexes for `expires_at` and `idle_expires_at`, migration concurrency advisory locking with clean skip, constant-time dummy hash verification. 402 automated tests passing)
 - [x] **Phase 5F-A2.1.2: Dedicated Test Role and Database Safety** (Created dedicated non-superuser test role `namlatic_test` with least privileges on `namlatic_hotel_test` and zero permissions on development database `namlatic_hotel`, strengthened test database validation with exact expected test database name matching, explicit allowed-host enforcement rejecting unauthorized remote hosts while supporting custom CI hosts via `TEST_DB_ALLOWED_HOSTS`, strict rejection of application user `namlatic_app` and administrative superusers `postgres`/`root`/`admin`, replaced all unit test fixtures with fictional credentials. 414 automated tests passing)
 - [x] **Phase 5F-A2.2: Backend Authentication Middleware & Route Lockdown** (PostgreSQL-backed split-token sessions storing SHA-256 verifier hashes, `__Host-namlatic_session` HttpOnly cookie, timing-safe reverse proxy secret verification with zero-downtime rotation, tokenless CSRF defense with `X-Requested-With` and Fetch Metadata, bounded LRU abuse throttler with progressive delays and IP rate limiting, dummy Argon2 verification timing equalization, complete route protection locking down all hotel endpoints `GET /api/hotels`, `GET /api/hotels/stats`, `GET /api/hotels/:id`, `POST /api/hotels`, `PUT /api/hotels/:id`, `DELETE /api/hotels/:id`, narrow orchestrator health probe exemptions. 512 automated tests passing)
-- [ ] **Phase 5F-A2.3: Backend Security Verification** (Full backend integration tests, direct API isolation, error handling, regression audit)
+- [x] **Phase 5F-A2.3: Backend Security Audit, Authentication Hardening & Final Verification** (Systematic security audit across all authentication, session management, and route protection modules; strict RFC 6265bis `__Host-` cookie enforcement with safe dev plain-HTTP fallback; health probe method bypass restriction limiting exemptions strictly to GET/HEAD; fetch metadata lowercase normalization and strict site allowlisting; throttled sliding idle refresh race condition mitigation; runtime PostgreSQL catalog verification of dedicated test role least privileges; comprehensive 6x6 hotel route protection matrix; 567 automated tests passing)
 - [ ] **Phase 5F-A3: Frontend Authentication UI & Protected Routing** (Login page, Redux authSlice, ProtectedRoute, session bootstrap, logout control)
 - [ ] **Phase 5F-B: Cloud Resource Provisioning** (Neon PostgreSQL, Render Web Service, Cloudflare R2 bucket, Vercel proxy configuration)
 - [ ] **Phase 5G: Production End-to-End & Security Verification** (Live cloud verification, CORS validation, SSL audit, probe monitoring)
@@ -226,10 +226,10 @@ npm test
 ## 8. Important Security Notice: Owner Authentication Status
 
 > [!NOTE]
-> **Backend Route Protection & Owner Authentication Fully Implemented (Phase 5F-A2.2):**
-> Phase 5F-A2.2 locked down all hotel endpoints (`GET /api/hotels`, `GET /api/hotels/stats`, `GET /api/hotels/:id`, `POST /api/hotels`, `PUT /api/hotels/:id`, `DELETE /api/hotels/:id`) behind mandatory owner session authentication (`requireAuth`), tokenless CSRF verification (`verifyTokenlessCsrf`), and reverse proxy secret validation (`verifyProxySecret`).
+> **Backend Route Protection & Security Hardening Complete (Phase 5F-A2.3):**
+> Phase 5F-A2.3 audited and verified that all hotel endpoints (`GET /api/hotels`, `GET /api/hotels/stats`, `GET /api/hotels/:id`, `POST /api/hotels`, `PUT /api/hotels/:id`, `DELETE /api/hotels/:id`) are locked down behind mandatory owner session authentication (`requireAuth`), tokenless CSRF verification (`verifyTokenlessCsrf`), and reverse proxy secret validation (`verifyProxySecret`).
 >
-> Probes (`GET /api/health` and `GET /api/ready`) remain unauthenticated and exempt from rate limiting to support platform orchestrators.
+> Health probes (`GET /api/health` and `GET /api/ready`) are strictly restricted to GET and HEAD methods and remain unauthenticated and unthrottled for orchestrators. Arbitrary methods (`POST /api/health`, `DELETE /api/ready`) are rejected with HTTP 403.
 >
 > Frontend UI authentication and client-side protected routing are scheduled for **Phase 5F-A3**. Access control is strictly enforced at the Express API layer.
 
@@ -238,9 +238,11 @@ npm test
 ## 9. Documentation Index
 
 - 📘 [System Architecture](docs/ARCHITECTURE.md)
+- 🔒 [Backend Security Audit Report (Phase 5F-A2.3)](docs/security/PHASE_5F_A2_3_BACKEND_SECURITY_AUDIT.md)
 - 🗄️ [Database Guide & Data Types](docs/DATABASE_GUIDE.md)
 - 🔌 [Complete API Documentation](docs/API_DOCUMENTATION.md)
 - 🧪 [Testing Guide](docs/TESTING_GUIDE.md)
 - 💡 [Technical Decisions & Rationale](docs/TECHNICAL_DECISIONS.md)
 - ☁️ [Twelve-Factor App Considerations](docs/TWELVE_FACTOR_COMPLIANCE.md)
 - 🎓 [Technical Interview Preparation Guide](docs/INTERVIEW_PREPARATION.md)
+- 📖 [Comprehensive Project Interview Guide](docs/NAMLATIC_HOTEL_PROJECT_INTERVIEW_GUIDE.md)

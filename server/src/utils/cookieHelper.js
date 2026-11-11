@@ -6,7 +6,21 @@
 const net = require('net');
 
 const COOKIE_NAME = '__Host-namlatic_session';
+const DEV_COOKIE_NAME = 'namlatic_session';
 const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60; // 7 days in seconds
+
+/**
+ * Returns the canonical session cookie name for the given runtime environment.
+ * Production strictly enforces the RFC 6265bis '__Host-' prefix.
+ * Plain-HTTP development environments safely fall back to 'namlatic_session'
+ * to avoid browser rejection of non-Secure cookies with __Host- prefix.
+ *
+ * @param {boolean} [isProduction=false]
+ * @returns {string}
+ */
+function getSessionCookieName(isProduction = false) {
+  return isProduction ? COOKIE_NAME : DEV_COOKIE_NAME;
+}
 
 /**
  * Parses a standard HTTP Cookie header string into a key-value dictionary.
@@ -91,30 +105,40 @@ function truncateUserAgent(ua) {
 
 /**
  * Constructs the Set-Cookie header value for an active owner session.
- * Adheres strictly to the __Host- prefix requirements:
- * - Cookie name begins with __Host-
- * - Path=/
- * - Secure flag present in production
- * - No Domain attribute
- * - HttpOnly and SameSite=Lax
+ *
+ * RFC 6265bis Prefix Guarantees:
+ * - If the cookie name begins with '__Host-', it MUST have Path=/, MUST have Secure,
+ *   and MUST NOT have a Domain attribute.
+ * - By default (production, testing, and secure localhost development):
+ *   Uses strictly '__Host-namlatic_session' with the 'Secure' attribute.
+ * - Safe development-only plain-HTTP fallback:
+ *   If plain-HTTP development is explicitly enabled (COOKIE_PLAIN_HTTP=true or plainHttpDev: true)
+ *   outside of production, falls back to 'namlatic_session' without Secure to prevent RFC 6265bis
+ *   browser rejection when testing on non-HTTPS origins without secure contexts.
+ *   Production environment NEVER permits unsecure or non-__Host cookies.
  *
  * @param {string} token
- * @param {{ isProduction?: boolean, maxAgeSeconds?: number }} [options]
+ * @param {{ isProduction?: boolean, maxAgeSeconds?: number, secure?: boolean, plainHttpDev?: boolean }} [options]
  * @returns {string}
  */
 function buildSessionCookie(token, options = {}) {
-  const isProduction = options.isProduction ?? false;
+  const isProduction = options.isProduction ?? (process.env.NODE_ENV === 'production');
+  const isPlainHttpDev = !isProduction && (options.plainHttpDev ?? (process.env.COOKIE_PLAIN_HTTP === 'true'));
+  const isSecure = options.secure ?? (!isPlainHttpDev || isProduction);
   const maxAge = options.maxAgeSeconds ?? SESSION_MAX_AGE_SECONDS;
 
+  // Use __Host- prefix when Secure flag is present (RFC 6265bis requirement)
+  const cookieName = isSecure ? COOKIE_NAME : DEV_COOKIE_NAME;
+
   const parts = [
-    `${COOKIE_NAME}=${token}`,
+    `${cookieName}=${token}`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
     `Max-Age=${maxAge}`,
   ];
 
-  if (isProduction) {
+  if (isSecure) {
     parts.push('Secure');
   }
 
@@ -124,14 +148,17 @@ function buildSessionCookie(token, options = {}) {
 /**
  * Constructs the Set-Cookie header value to clear/invalidate the session cookie in the browser.
  *
- * @param {{ isProduction?: boolean }} [options]
+ * @param {{ isProduction?: boolean, secure?: boolean, plainHttpDev?: boolean }} [options]
  * @returns {string}
  */
 function buildClearSessionCookie(options = {}) {
-  const isProduction = options.isProduction ?? false;
+  const isProduction = options.isProduction ?? (process.env.NODE_ENV === 'production');
+  const isPlainHttpDev = !isProduction && (options.plainHttpDev ?? (process.env.COOKIE_PLAIN_HTTP === 'true'));
+  const isSecure = options.secure ?? (!isPlainHttpDev || isProduction);
+  const cookieName = isSecure ? COOKIE_NAME : DEV_COOKIE_NAME;
 
   const parts = [
-    `${COOKIE_NAME}=`,
+    `${cookieName}=`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
@@ -139,7 +166,7 @@ function buildClearSessionCookie(options = {}) {
     'Max-Age=0',
   ];
 
-  if (isProduction) {
+  if (isSecure) {
     parts.push('Secure');
   }
 
@@ -148,7 +175,9 @@ function buildClearSessionCookie(options = {}) {
 
 module.exports = {
   COOKIE_NAME,
+  DEV_COOKIE_NAME,
   SESSION_MAX_AGE_SECONDS,
+  getSessionCookieName,
   parseCookies,
   sanitizeIp,
   truncateUserAgent,
