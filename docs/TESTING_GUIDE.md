@@ -114,6 +114,13 @@ Built entirely using Node.js's built-in `node:test` framework to avoid bloating 
     - Token hashing: Consistent lowercase SHA-256 hex digest, raw token never stored in database.
     - Input validation: Safe rejection of null/non-string tokens without throwing.
     - Race condition protection: Detects concurrent session revocation during sliding idle update and returns null.
+16. **`imageSanitization.test.js` (6 tests - Phase 5F-B):**
+    - JPEG EXIF, GPS, camera model, and personal metadata stripping.
+    - Auto-orientation of photos with orientation tags and orientation tag removal.
+    - PNG metadata stripping and dimension preservation.
+    - WebP metadata stripping and dimension preservation.
+    - Rejection of corrupt image files and cleanup of temporary `.tmp` files.
+    - Rejection of non-image files with invalid magic bytes.
 
 ---
 
@@ -411,10 +418,10 @@ npm run test:watch
 ```
 
 ### Total Test Suite Count:
-- **Backend Unit Tests:** 272 passed (15 test suites)
-- **Backend Integration Tests:** 156 passed (63 hotel API + 18 auth/migrations + 75 auth API)
+- **Backend Unit Tests:** 278 passed (16 test suites)
+- **Backend Integration Tests:** 156 passed (63 hotel API + 28 auth/migrations + 65 auth API)
 - **Frontend Unit Tests:** 208 passed (18 test suites)
-- **Total Automated Tests:** **636 / 636 passed (100% pass rate)**
+- **Total Automated Tests:** **642 / 642 passed (100% pass rate)**
 
 ---
 

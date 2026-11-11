@@ -2,6 +2,10 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const sharp = require('sharp');
+
+// Disable Sharp internal file caching to prevent locked file handles on Windows
+sharp.cache(false);
 
 const UPLOAD_DIR = path.resolve(__dirname, '../uploads/hotels');
 
@@ -118,6 +122,45 @@ async function verifyMagicBytes(filePath) {
 }
 
 /**
+ * Strips EXIF, GPS, camera metadata, and personal data from an image file,
+ * auto-orients the image based on EXIF orientation if present,
+ * and overwrites the file on disk with the clean, sanitized version.
+ *
+ * @param {string} filePath - Absolute path to the saved file on disk
+ * @param {string} mimeType - Verified MIME type ('image/jpeg', 'image/png', 'image/webp')
+ * @returns {Promise<{ size: number, format: string, isSanitized: boolean }>}
+ */
+async function sanitizeImage(filePath, mimeType) {
+  const tempPath = `${filePath}.clean.tmp`;
+  try {
+    const inputBuffer = await fs.promises.readFile(filePath);
+    let pipeline = sharp(inputBuffer, { failOnError: true }).rotate();
+
+    if (mimeType === 'image/jpeg') {
+      pipeline = pipeline.jpeg({ quality: 85, mozjpeg: true });
+    } else if (mimeType === 'image/png') {
+      pipeline = pipeline.png({ compressionLevel: 8 });
+    } else if (mimeType === 'image/webp') {
+      pipeline = pipeline.webp({ quality: 85 });
+    }
+
+    const outputBuffer = await pipeline.toBuffer();
+    await fs.promises.writeFile(tempPath, outputBuffer);
+    await fs.promises.rename(tempPath, filePath);
+
+    const metadata = await sharp(outputBuffer).metadata();
+    return {
+      size: outputBuffer.length,
+      format: metadata.format,
+      isSanitized: true,
+    };
+  } catch (err) {
+    await fs.promises.unlink(tempPath).catch(() => {});
+    throw err;
+  }
+}
+
+/**
  * Express middleware to handle single image upload and verify binary signature.
  */
 const uploadHotelImage = (req, res, next) => {
@@ -147,7 +190,7 @@ const uploadHotelImage = (req, res, next) => {
       });
     }
 
-    // If a file was uploaded, verify its magic bytes signature
+    // If a file was uploaded, verify its magic bytes signature and strip EXIF metadata
     if (req.file) {
       const signature = await detectImageSignature(req.file.path);
       if (!signature.isValid) {
@@ -158,6 +201,21 @@ const uploadHotelImage = (req, res, next) => {
           statusCode: 400,
           message:
             'Invalid file content. File signature does not match JPEG, PNG, or WebP.',
+        });
+      }
+
+      // Sanitize image: strip EXIF / GPS / device metadata and auto-orient
+      try {
+        const sanitized = await sanitizeImage(req.file.path, signature.mimeType);
+        req.file.size = sanitized.size;
+        req.file.isMetadataStripped = true;
+      } catch (_sanitizeErr) {
+        await fs.promises.unlink(req.file.path).catch(() => {});
+        return res.status(400).json({
+          status: 'error',
+          statusCode: 400,
+          message:
+            'Invalid or corrupt image content. The image file could not be processed.',
         });
       }
 
@@ -175,5 +233,6 @@ module.exports = {
   uploadHotelImage,
   verifyMagicBytes,
   detectImageSignature,
+  sanitizeImage,
   UPLOAD_DIR,
 };

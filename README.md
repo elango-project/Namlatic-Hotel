@@ -219,7 +219,7 @@ npm test
 - [x] **Phase 5F-A2.3: Backend Security Audit, Authentication Hardening & Final Verification** (Systematic security audit across all authentication, session management, and route protection modules; strict RFC 6265bis `__Host-` cookie enforcement with safe dev plain-HTTP fallback; health probe method bypass restriction limiting exemptions strictly to GET/HEAD; fetch metadata lowercase normalization and strict site allowlisting; throttled sliding idle refresh race condition mitigation; runtime PostgreSQL catalog verification of dedicated test role least privileges; comprehensive 6x6 hotel route protection matrix; 567 automated tests passing)
 - [x] **Phase 5F-A3: Frontend Authentication UI & Protected Routing** (Owner login page with Argon2id credentials, Redux Toolkit authSlice, persistent HttpOnly session restoration via `GET /api/auth/me`, `ProtectedRoute` route protection wrapper preventing flash of private content, session expiration interceptor with unauthorized event subscription, accessible show/hide password toggle, header and sidebar logout controls with loading feedback, responsive design verified across 8 viewports, 614 automated tests passing)
 - [x] **Phase 5F-A3.1: Frontend Authentication Reliability Fixes & Documentation Consistency** (Resolved connection-error handling in ProtectedRoute and LoginPage, differentiated invalid credentials, rate limiting, and network/server outages, added recoverable retry actions, corrected session lifecycle documentation to 7-day absolute lifetime / 2-hour idle timeout / 5-minute activity throttle with database and cookie agreement, improved screenshot script portability with project-relative output and dynamic browser resolution, added 22 new regression tests across 3 suites, 636 automated tests passing)
-- [ ] **Phase 5F-B: Cloud Resource Provisioning** (Neon PostgreSQL, Render Web Service, Cloudflare R2 bucket, Vercel proxy configuration)
+- [x] **Phase 5F-B: Cloud Resource Provisioning & Production Deployment Preparation** (Comprehensive multi-cloud provisioning blueprint and runbook; Sharp EXIF/GPS metadata stripping and auto-orientation pipeline for JPEG, PNG, and WebP uploads; Render Infrastructure Blueprint render.yaml; Neon least-privilege role setup; Cloudflare R2 bucket-scoped configuration; Vercel same-origin proxy validation; docs/DEPLOYMENT.md guide; 642 automated tests passing)
 - [ ] **Phase 5G: Production End-to-End & Security Verification** (Live cloud verification, CORS validation, SSL audit, probe monitoring)
 
 ---
@@ -238,13 +238,14 @@ npm test
 > - **Activity Refresh Throttling:** Database write updates to sliding idle expiration are throttled to at most once per 5 minutes.
 > - **Absolute Ceiling:** Sliding idle extensions are bounded by the hard absolute lifetime (`Math.min(now + 2h, expires_at)`).
 >
-> Probes (`GET /api/health` and `GET /api/ready`) remain unauthenticated and unthrottled for platform orchestrators. Single-owner portal architecture is fully operational and verified across 636 automated tests.
+> Probes (`GET /api/health` and `GET /api/ready`) remain unauthenticated and unthrottled for platform orchestrators. Single-owner portal architecture is fully operational and verified across 642 automated tests.
 
 ---
 
 ## 9. Documentation Index
 
 - 📘 [System Architecture](docs/ARCHITECTURE.md)
+- 🚀 [Production Deployment & Cloud Provisioning Guide](docs/DEPLOYMENT.md)
 - 🔒 [Backend Security Audit Report (Phase 5F-A2.3)](docs/security/PHASE_5F_A2_3_BACKEND_SECURITY_AUDIT.md)
 - 🗄️ [Database Guide & Data Types](docs/DATABASE_GUIDE.md)
 - 🔌 [Complete API Documentation](docs/API_DOCUMENTATION.md)

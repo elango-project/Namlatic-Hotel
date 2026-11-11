@@ -1,0 +1,46 @@
+# ==============================================================================
+# Namlatic Hotel Owner Portal – Render Infrastructure Blueprint
+# ==============================================================================
+# Declares the production Node.js Express backend service for Render.
+# Reference: https://render.com/docs/blueprint-spec
+# ==============================================================================
+
+services:
+  - type: web
+    name: namlatic-hotel-backend
+    runtime: node
+    plan: free
+    region: oregon # Standard Render free tier region (US West)
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: HOST
+        value: 0.0.0.0
+      - key: TRUST_PROXY
+        value: "1"
+      - key: MEDIA_STORAGE_DRIVER
+        value: r2
+      # The following sensitive credentials are set in the Render Dashboard
+      # and marked sync: false to prevent leaking secrets in Git:
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: BACKEND_PROXY_SECRET
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        value: namlatic-hotel-media
+      - key: R2_PUBLIC_BASE_URL
+        sync: false

@@ -1057,3 +1057,32 @@ Phase 5F-A3.1 enhances the reliability and outage feedback of the frontend authe
 
 4. **Portable Screenshot Capture Automation:**
    - `client/capture-login-screenshots.js` uses project-relative screenshot output paths (`docs/screenshots/phase5f-a3`), eliminates hardcoded personal Windows paths, and dynamically discovers browser executables via environment variables (`PLAYWRIGHT_CHROME_PATH`, `CHROME_PATH`, `BROWSER_EXECUTABLE_PATH`) with fallback to standard Playwright browser resolution.
+
+---
+
+## 14. Cloud Resource Provisioning & Production Infrastructure (Phase 5F-B)
+
+Phase 5F-B establishes the multi-cloud infrastructure specifications, configuration blueprints, and image sanitization safeguards required for production deployment across Vercel, Render, Neon, and Cloudflare R2.
+
+### 14.1 Production Multi-Cloud Architecture
+- **Edge Layer (Vercel):** Serves the pre-rendered React 18 SPA static assets from `client/dist`. Hosts the Same-Origin API Proxy rewriting `/api/(.*)` to `${BACKEND_ORIGIN}/api/$1`, injecting the shared `x-vercel-proxy-secret` header, bypassing rewrite caching (`x-vercel-enable-rewrite-caching: 0`), and enforcing comprehensive security headers (HSTS, CSP, nosniff, frameguard, Permissions-Policy).
+- **Application Layer (Render):** Hosts the Node.js 22 Express backend as a Web Service declared via `render.yaml`. Binds dynamically to `PORT` on `0.0.0.0`, operates behind a single reverse proxy hop (`TRUST_PROXY=1`), verifies `x-vercel-proxy-secret` using constant-time comparison, enforces owner session authentication (`requireAuth`), and exposes narrow orchestrator probes (`/api/health`, `/api/ready`).
+- **Data Layer (Neon):** Serverless PostgreSQL 18 in AWS US East/West with scale-to-zero compute. Enforces encrypted TLS connections (`sslmode=require`), opportunistic channel binding (`channel_binding=prefer`), and connects via a dedicated non-superuser role (`namlatic_app`). Versioned migrations (`001`, `002`, `003`) execute transactionally with advisory lock concurrency protection.
+- **Storage Layer (Cloudflare R2):** S3-compatible object storage with zero egress fees. Dedicated private bucket `namlatic-hotel-media` accessed via bucket-scoped credentials. Sanitized photos are served through a dedicated public CDN base URL (`R2_PUBLIC_BASE_URL`).
+
+### 14.2 Image Processing & EXIF Metadata Stripping Pipeline (`upload.middleware.js`)
+Before uploaded hotel photographs can be publicly delivered from Cloudflare R2 or local storage, they are processed through an automated sanitization pipeline:
+1. **Magic-Byte Signature Verification:** `detectImageSignature()` inspects the first 12 binary bytes on disk to confirm valid JPEG (`FF D8 FF`), PNG (`89 50 4E 47 0D 0A 1A 0A`), or WebP (`RIFF...WEBP`) signatures. Non-image or spoofed script payloads are rejected with HTTP 400.
+2. **Sharp EXIF/GPS Metadata Stripping:** `sanitizeImage()` reads the staged image into an in-memory buffer and processes it through `sharp({ failOnError: true }).rotate()`. This automatically rotates oriented camera photos according to EXIF orientation tags, and completely strips all EXIF, GPS coordinates, camera model/serial numbers, IPTC, and XMP metadata (because Sharp omits `.withMetadata()`).
+3. **Optimized Re-Encoding:** JPEGs are encoded with MozJPEG at $85\%$ quality, PNGs at compression level $8$, and WebP at $85\%$ quality.
+4. **Atomic File Replacement:** The sanitized buffer is written to a temporary `.clean.tmp` file and atomically renamed over the original staged file on disk, eliminating file locking and concurrency race conditions.
+5. **Corrupt Payload Protection:** If an image is corrupt or truncated, Sharp throws an error, the staged file is unlinked immediately, and HTTP 400 is returned with a descriptive error message.
+
+### 14.3 Render Blueprint Specification (`render.yaml`)
+A declaration file at the repository root defines the backend service for Render:
+- `runtime: node` with `engines: { "node": ">=22.0.0" }`
+- `rootDir: server`, `buildCommand: npm install`, `startCommand: npm start`
+- `healthCheckPath: /api/health`
+- `envVars` mapped with `sync: false` for all secrets (`DATABASE_URL`, `BACKEND_PROXY_SECRET`, `R2_*`, `CORS_ORIGIN`).
+
+*For the complete deployment runbook, environment-variable mapping matrix, and provider setup guides, refer to [Production Deployment Guide](DEPLOYMENT.md).*
