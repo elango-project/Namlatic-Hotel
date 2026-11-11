@@ -218,6 +218,7 @@ npm test
 - [x] **Phase 5F-A2.2: Backend Authentication Middleware & Route Lockdown** (PostgreSQL-backed split-token sessions storing SHA-256 verifier hashes, `__Host-namlatic_session` HttpOnly cookie, timing-safe reverse proxy secret verification with zero-downtime rotation, tokenless CSRF defense with `X-Requested-With` and Fetch Metadata, bounded LRU abuse throttler with progressive delays and IP rate limiting, dummy Argon2 verification timing equalization, complete route protection locking down all hotel endpoints `GET /api/hotels`, `GET /api/hotels/stats`, `GET /api/hotels/:id`, `POST /api/hotels`, `PUT /api/hotels/:id`, `DELETE /api/hotels/:id`, narrow orchestrator health probe exemptions. 512 automated tests passing)
 - [x] **Phase 5F-A2.3: Backend Security Audit, Authentication Hardening & Final Verification** (Systematic security audit across all authentication, session management, and route protection modules; strict RFC 6265bis `__Host-` cookie enforcement with safe dev plain-HTTP fallback; health probe method bypass restriction limiting exemptions strictly to GET/HEAD; fetch metadata lowercase normalization and strict site allowlisting; throttled sliding idle refresh race condition mitigation; runtime PostgreSQL catalog verification of dedicated test role least privileges; comprehensive 6x6 hotel route protection matrix; 567 automated tests passing)
 - [x] **Phase 5F-A3: Frontend Authentication UI & Protected Routing** (Owner login page with Argon2id credentials, Redux Toolkit authSlice, persistent HttpOnly session restoration via `GET /api/auth/me`, `ProtectedRoute` route protection wrapper preventing flash of private content, session expiration interceptor with unauthorized event subscription, accessible show/hide password toggle, header and sidebar logout controls with loading feedback, responsive design verified across 8 viewports, 614 automated tests passing)
+- [x] **Phase 5F-A3.1: Frontend Authentication Reliability Fixes & Documentation Consistency** (Resolved connection-error handling in ProtectedRoute and LoginPage, differentiated invalid credentials, rate limiting, and network/server outages, added recoverable retry actions, corrected session lifecycle documentation to 7-day absolute lifetime / 2-hour idle timeout / 5-minute activity throttle with database and cookie agreement, improved screenshot script portability with project-relative output and dynamic browser resolution, added 22 new regression tests across 3 suites, 636 automated tests passing)
 - [ ] **Phase 5F-B: Cloud Resource Provisioning** (Neon PostgreSQL, Render Web Service, Cloudflare R2 bucket, Vercel proxy configuration)
 - [ ] **Phase 5G: Production End-to-End & Security Verification** (Live cloud verification, CORS validation, SSL audit, probe monitoring)
 
@@ -226,12 +227,18 @@ npm test
 ## 8. Important Security Notice: Owner Authentication Status
 
 > [!NOTE]
-> **Owner Authentication & Protected Routing Fully Implemented (Phases 5F-A2.2, 5F-A2.3 & 5F-A3):**
+> **Owner Authentication & Protected Routing Fully Implemented (Phases 5F-A2.2, 5F-A2.3, 5F-A3 & 5F-A3.1):**
 > All hotel inventory and analytics endpoints (`GET /api/hotels`, `GET /api/hotels/stats`, `GET /api/hotels/:id`, `POST /api/hotels`, `PUT /api/hotels/:id`, `DELETE /api/hotels/:id`) are strictly locked down behind mandatory owner session authentication (`requireAuth`), tokenless CSRF verification (`verifyTokenlessCsrf`), and reverse proxy secret validation (`verifyProxySecret`).
 >
-> On the frontend, `ProtectedRoute` guards all owner routes (`/`, `/dashboard`, `/hotels`, `/hotels/new`, `/hotels/:id`, `/hotels/:id/edit`), restoring sessions automatically from the HttpOnly session cookie on startup without exposing credentials to JavaScript. Unauthenticated users are redirected to the responsive `/login` screen.
+> On the frontend, `ProtectedRoute` guards all owner routes (`/`, `/dashboard`, `/hotels`, `/hotels/new`, `/hotels/:id`, `/hotels/:id/edit`), restoring sessions automatically from the HttpOnly session cookie on startup without exposing credentials to JavaScript. Unauthenticated users are redirected to the responsive `/login` screen. If a network outage or server error occurs during startup, a recoverable error screen with a "Retry Session Verification" action is displayed instead of exposing protected data or showing misleading credential errors.
 >
-> Probes (`GET /api/health` and `GET /api/ready`) remain unauthenticated and unthrottled for platform orchestrators. Single-owner portal architecture is fully operational and verified across 614 automated tests.
+> Session Security Policy:
+> - **Hard Absolute Lifetime:** 7 days (`Max-Age=604800` s on `__Host-namlatic_session` cookie; `expires_at = created_at + 7 days` in PostgreSQL `sessions` table). Cookie and database agree.
+> - **Rolling Inactivity Timeout:** 2 hours of inactivity (`idle_expires_at = last_active_at + 2 hours`).
+> - **Activity Refresh Throttling:** Database write updates to sliding idle expiration are throttled to at most once per 5 minutes.
+> - **Absolute Ceiling:** Sliding idle extensions are bounded by the hard absolute lifetime (`Math.min(now + 2h, expires_at)`).
+>
+> Probes (`GET /api/health` and `GET /api/ready`) remain unauthenticated and unthrottled for platform orchestrators. Single-owner portal architecture is fully operational and verified across 636 automated tests.
 
 ---
 

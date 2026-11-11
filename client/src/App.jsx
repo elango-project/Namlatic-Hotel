@@ -8,7 +8,12 @@ import HotelFormPage from './pages/HotelFormPage';
 import HotelDetailsPage from './pages/HotelDetailsPage';
 import LoginPage from './pages/LoginPage';
 import ProtectedRoute from './components/ProtectedRoute';
-import { fetchCurrentUser, sessionExpired, selectIsInitialized } from './store/authSlice';
+import {
+  fetchCurrentUser,
+  sessionExpired,
+  selectIsInitialized,
+  selectConnectionError,
+} from './store/authSlice';
 import { onUnauthorized } from './services/api';
 import './styles/App.css';
 
@@ -17,13 +22,14 @@ function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const initialized = useSelector(selectIsInitialized);
+  const connectionError = useSelector(selectConnectionError);
 
   // Restore session from HttpOnly cookie on application startup
   useEffect(() => {
-    if (!initialized) {
+    if (!initialized && !connectionError) {
       dispatch(fetchCurrentUser());
     }
-  }, [dispatch, initialized]);
+  }, [dispatch, initialized, connectionError]);
 
   // Handle session expiration from protected API responses (HTTP 401)
   useEffect(() => {

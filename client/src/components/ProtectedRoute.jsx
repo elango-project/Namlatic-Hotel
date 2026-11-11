@@ -26,38 +26,36 @@ export function ProtectedRoute({ children }) {
   const dispatch = useDispatch();
   const isAuthenticated = useSelector(selectIsAuthenticated);
   const initialized = useSelector(selectIsInitialized);
-  const status = useSelector(selectAuthStatus);
   const auth = useSelector(selectAuth);
 
-  // 1. App initialization: Wait until initial session check resolves
-  if (!initialized) {
-    // If backend connection failed on initial startup, show recoverable error screen
-    if (auth?.connectionError) {
-      return (
-        <div className="auth-loading-screen" role="alert">
-          <div className="auth-loading-card auth-error-card">
-            <div className="brand-icon-box" style={{ background: 'var(--color-danger)' }}>
-              <span className="brand-letter">!</span>
-            </div>
-            <h3 style={{ marginTop: '1rem', fontSize: '1.1rem', color: 'var(--color-text-main)' }}>
-              Authentication Service Unavailable
-            </h3>
-            <p style={{ fontSize: '0.9rem', color: 'var(--color-text-secondary)', margin: '0.5rem 0 1.25rem' }}>
-              {auth.connectionErrorMessage || auth.error || 'Unable to connect to the authentication server. Please check your network.'}
-            </p>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => dispatch(fetchCurrentUser())}
-            >
-              Retry Session Verification
-            </button>
+  // 1. Recoverable connection or server error during session verification
+  if (auth?.connectionError) {
+    return (
+      <div className="auth-loading-screen" role="alert">
+        <div className="auth-loading-card auth-error-card">
+          <div className="brand-icon-box" style={{ background: 'var(--color-danger)' }}>
+            <span className="brand-letter">!</span>
           </div>
+          <h3 style={{ marginTop: '1rem', fontSize: '1.1rem', color: 'var(--color-text-main)' }}>
+            Authentication Service Unavailable
+          </h3>
+          <p style={{ fontSize: '0.9rem', color: 'var(--color-text-secondary)', margin: '0.5rem 0 1.25rem' }}>
+            {auth.connectionErrorMessage || auth.error || 'Unable to connect to the authentication server. Please check your network.'}
+          </p>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => dispatch(fetchCurrentUser())}
+          >
+            Retry Session Verification
+          </button>
         </div>
-      );
-    }
+      </div>
+    );
+  }
 
-    // Otherwise show loading spinner during session bootstrap
+  // 2. App initialization: Wait until initial session check resolves
+  if (!initialized) {
     return (
       <div className="auth-loading-screen" role="status" aria-live="polite">
         <div className="auth-loading-card">
@@ -71,12 +69,12 @@ export function ProtectedRoute({ children }) {
     );
   }
 
-  // 2. Unauthenticated: Redirect to /login and preserve attempted URL
+  // 3. Unauthenticated: Redirect to /login and preserve attempted URL
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // 3. Authenticated: Render protected route content
+  // 4. Authenticated: Render protected route content
   return children ? children : <Outlet />;
 }
 

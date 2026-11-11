@@ -9,14 +9,18 @@ export const initialState = {
   status: 'idle', // 'idle' | 'loading' | 'succeeded' | 'failed'
   isAuthenticated: false,
   error: null,
+  errorType: null, // 'credentials' | 'rate_limit' | 'server' | 'network' | 'session_expired' | null
   initialized: false,
   sessionExpired: false,
   connectionError: false,
+  connectionErrorMessage: null,
+  retryAfter: null,
 };
 
 /**
  * Async thunk to authenticate the hotel owner.
  * Sends credentials to POST /api/auth/login and receives safe owner profile.
+ * Distinguishes invalid credentials, rate limiting, server errors, and network outages.
  */
 export const loginUser = createAsyncThunk(
   'auth/loginUser',
@@ -25,10 +29,28 @@ export const loginUser = createAsyncThunk(
       const response = await authApi.login({ email, password });
       return response.user || response.data?.user;
     } catch (err) {
-      const message = err.message || 'Invalid email or password.';
+      const status = err.status || err.statusCode;
+      let errorType = 'unknown';
+      let message = err.message;
+
+      if (!status || err.name === 'TypeError') {
+        errorType = 'network';
+        message = 'Unable to connect to the authentication server. Please check your network connection.';
+      } else if (status === 429) {
+        errorType = 'rate_limit';
+        message = err.message || 'Too many login attempts. Please try again later.';
+      } else if (status === 401) {
+        errorType = 'credentials';
+        message = 'Invalid email or password.';
+      } else if (status >= 500) {
+        errorType = 'server';
+        message = 'Authentication server error. Please try again later.';
+      }
+
       return rejectWithValue({
         message,
-        status: err.status,
+        status,
+        errorType,
         retryAfter: err.retryAfter,
       });
     }
@@ -38,6 +60,7 @@ export const loginUser = createAsyncThunk(
 /**
  * Async thunk to restore the current session from HttpOnly session cookie.
  * Sends GET /api/auth/me on application initialization.
+ * Distinguishes unauthenticated 401, server 500+, and network connection failures.
  */
 export const fetchCurrentUser = createAsyncThunk(
   'auth/fetchCurrentUser',
@@ -49,23 +72,39 @@ export const fetchCurrentUser = createAsyncThunk(
       if (err.name === 'AbortError') {
         throw err;
       }
-      if (err.status === 401) {
+      const status = err.status || err.statusCode;
+      if (status === 401) {
         return rejectWithValue({
           unauthenticated: true,
+          status: 401,
           message: 'No active session.',
         });
       }
+
+      let errorType = 'network';
+      let message = err.message || 'Unable to connect to authentication server.';
+
+      if (status >= 500) {
+        errorType = 'server';
+        message = 'Authentication server error. Please try again later.';
+      } else if (!status || err.name === 'TypeError') {
+        errorType = 'network';
+        message = 'Unable to connect to the authentication server. Please check your network connection.';
+      }
+
       return rejectWithValue({
         unauthenticated: false,
-        message: err.message || 'Unable to connect to authentication service.',
+        status,
+        errorType,
+        message,
       });
     }
   },
   {
     condition: (_, { getState }) => {
       const { auth } = getState();
-      // Prevent unnecessary duplicate session-bootstrap requests if already in flight
-      if (auth && auth.status === 'loading' && auth.initialized === false) {
+      // Prevent duplicate in-flight session restoration requests
+      if (auth && auth.status === 'loading') {
         return false;
       }
       return true;
@@ -98,18 +137,25 @@ export const authSlice = createSlice({
       state.status = 'idle';
       state.sessionExpired = true;
       state.error = action.payload || 'Your session has expired. Please log in again.';
+      state.errorType = 'session_expired';
     },
     clearAuthError: (state) => {
       state.error = null;
+      state.errorType = null;
       state.sessionExpired = false;
+      state.connectionError = false;
+      state.connectionErrorMessage = null;
     },
     resetAuth: (state) => {
       state.user = null;
       state.isAuthenticated = false;
       state.status = 'idle';
       state.error = null;
+      state.errorType = null;
       state.sessionExpired = false;
       state.connectionError = false;
+      state.connectionErrorMessage = null;
+      state.retryAfter = null;
     },
   },
   extraReducers: (builder) => {
@@ -118,7 +164,9 @@ export const authSlice = createSlice({
       .addCase(fetchCurrentUser.pending, (state) => {
         state.status = 'loading';
         state.error = null;
+        state.errorType = null;
         state.connectionError = false;
+        state.connectionErrorMessage = null;
       })
       .addCase(fetchCurrentUser.fulfilled, (state, action) => {
         state.user = action.payload;
@@ -126,23 +174,27 @@ export const authSlice = createSlice({
         state.status = 'succeeded';
         state.initialized = true;
         state.error = null;
+        state.errorType = null;
         state.sessionExpired = false;
         state.connectionError = false;
+        state.connectionErrorMessage = null;
       })
       .addCase(fetchCurrentUser.rejected, (state, action) => {
         state.initialized = true;
         state.user = null;
         state.isAuthenticated = false;
+        state.status = 'idle';
         if (action.payload?.unauthenticated) {
           // Standard unauthenticated state on application startup
-          state.status = 'idle';
           state.error = null;
+          state.errorType = null;
           state.connectionError = false;
+          state.connectionErrorMessage = null;
         } else {
           // Network or server outage during background session restoration
-          state.status = 'idle';
           state.connectionError = true;
           state.connectionErrorMessage = action.payload?.message || 'Unable to connect to authentication server.';
+          state.errorType = action.payload?.errorType || 'network';
         }
       })
 
@@ -150,6 +202,7 @@ export const authSlice = createSlice({
       .addCase(loginUser.pending, (state) => {
         state.status = 'loading';
         state.error = null;
+        state.errorType = null;
         state.sessionExpired = false;
       })
       .addCase(loginUser.fulfilled, (state, action) => {
@@ -157,14 +210,18 @@ export const authSlice = createSlice({
         state.isAuthenticated = true;
         state.status = 'succeeded';
         state.error = null;
+        state.errorType = null;
         state.sessionExpired = false;
         state.connectionError = false;
+        state.connectionErrorMessage = null;
       })
       .addCase(loginUser.rejected, (state, action) => {
         state.status = 'failed';
         state.user = null;
         state.isAuthenticated = false;
         state.error = action.payload?.message || 'Invalid email or password.';
+        state.errorType = action.payload?.errorType || 'unknown';
+        state.retryAfter = action.payload?.retryAfter || null;
       })
 
       // --- logoutUser ---
@@ -177,8 +234,10 @@ export const authSlice = createSlice({
         state.isAuthenticated = false;
         state.status = 'idle';
         state.error = null;
+        state.errorType = null;
         state.sessionExpired = false;
         state.connectionError = false;
+        state.connectionErrorMessage = null;
       })
       .addCase(logoutUser.rejected, (state, action) => {
         state.status = 'failed';
@@ -195,6 +254,10 @@ export const selectCurrentUser = (state) => state.auth?.user;
 export const selectIsAuthenticated = (state) => state.auth?.isAuthenticated;
 export const selectAuthStatus = (state) => state.auth?.status;
 export const selectAuthError = (state) => state.auth?.error;
+export const selectAuthErrorType = (state) => state.auth?.errorType;
 export const selectIsInitialized = (state) => state.auth?.initialized;
+export const selectConnectionError = (state) => state.auth?.connectionError;
+export const selectConnectionErrorMessage = (state) => state.auth?.connectionErrorMessage;
+export const selectSessionExpired = (state) => state.auth?.sessionExpired;
 
 export default authSlice.reducer;

@@ -1026,5 +1026,34 @@ Async Thunks:
 
 ### 13.4 Session Expiration & Tokenless CSRF Handling (`api.js`)
 - `request()` automatically attaches `'X-Requested-With': 'XMLHttpRequest'` on mutating methods (`POST`, `PUT`, `DELETE`, `PATCH`).
-- Defaults to `credentials: 'include'` on all API calls.
-- Emits `onUnauthorized` callbacks for 401 responses on protected endpoints, while strictly excluding `/auth/login` and `/auth/me` to avoid false session expiration alerts or redirect loops.
+- Defaults to `credentials: 'include'` on all API calls, ensuring the `__Host-namlatic_session` cookie is transmitted.
+- Emits `onUnauthorized` callbacks for 401 responses on protected endpoints, while strictly excluding `/auth/login` (bad credentials) and `/auth/me` (initial unauthenticated check) to avoid false session expiration alerts or redirect loops.
+- When an owner's session expires due to idle timeout (2 hours) or absolute lifetime expiration (7 days), the next protected API call receives HTTP 401, triggering `sessionExpired()` in Redux and redirecting the user to `/login` with `state: { from, sessionExpired: true }`.
+
+### 13.5 Frontend Authentication Reliability & Outage Resilience (Phase 5F-A3.1)
+Phase 5F-A3.1 enhances the reliability and outage feedback of the frontend authentication system:
+
+1. **Robust Startup Connection-Error Handling:**
+   - In `ProtectedRoute`, `auth?.connectionError` is evaluated unconditionally. If a network outage or server 500 occurs during initial `fetchCurrentUser()`, the user is immediately shown an accessible "Authentication Service Unavailable" screen with a "Retry Session Verification" action.
+   - Protected route content (`hotels-list`, `new-hotel`, etc.) is strictly shielded during both loading and connection error states.
+   - Initial unauthenticated checks (HTTP 401 from `/api/auth/me`) are recognized as normal unauthenticated states and cleanly redirect to `/login` without triggering connection error banners.
+   - When the owner clicks "Retry Session Verification", `fetchCurrentUser` is re-dispatched, displaying the loading spinner and automatically revealing protected content once the backend recovers.
+
+2. **Differentiated Login Page Outage Feedback:**
+   - `LoginPage` strictly differentiates between:
+     * **Invalid Credentials (HTTP 401):** Displays "Invalid email or password."
+     * **Rate Limiting (HTTP 429):** Displays warning alert with progressive delay or retry-after message.
+     * **Server Errors (HTTP 500, 502, 503, 504):** Displays "Authentication server error. Please try again later." with a "Check Server Status" retry action.
+     * **Network Outages (Offline, DNS, Connection Refused):** Displays "Unable to connect to the authentication server. Please check your network connection." with a "Check Server Status" retry action.
+     * **Session Expired:** Displays warning alert: "Your session has expired. Please log in again."
+     * **Startup Session Probe Failure:** If `GET /api/auth/me` failed while on `/login`, displays a danger alert with a "Retry Session Check" button.
+   - Outages are never mistaken for invalid passwords.
+
+3. **Session Expiry Policy Agreement:**
+   - **Hard Absolute Lifetime:** 7 days (`604,800` seconds / `7 * 24 * 60 * 60 * 1000` ms) in PostgreSQL `sessions.expires_at` and `__Host-namlatic_session` cookie `Max-Age`.
+   - **Rolling Idle Timeout:** 2 hours of inactivity (`idle_expires_at = last_active_at + 2 hours`).
+   - **Refresh Throttle:** Sliding idle extension updates to PostgreSQL are throttled to at most once per 5 minutes.
+   - **Absolute Ceiling:** Sliding idle extensions are bounded by `Math.min(now + 2h, expires_at)`.
+
+4. **Portable Screenshot Capture Automation:**
+   - `client/capture-login-screenshots.js` uses project-relative screenshot output paths (`docs/screenshots/phase5f-a3`), eliminates hardcoded personal Windows paths, and dynamically discovers browser executables via environment variables (`PLAYWRIGHT_CHROME_PATH`, `CHROME_PATH`, `BROWSER_EXECUTABLE_PATH`) with fallback to standard Playwright browser resolution.

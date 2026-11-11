@@ -356,6 +356,32 @@ Built using **Vitest** + **React Testing Library** + **@testing-library/jest-dom
    - Authenticated child rendering: Successfully renders protected child components and nested routes when `isAuthenticated` is `true`.
    - Route state transition: Seamlessly transitions from loading state to protected content once auth verification resolves successfully without content flicker.
    - Session expiration redirection: Renders redirect to `/login` when session expires while user is actively on a protected route.
+16. **`authReliability.test.jsx` (11 tests - Phase 5F-A3.1):**
+   - Startup network unavailability: Verifies connection error screen is rendered and protected content is strictly shielded when `GET /api/auth/me` fails at network layer.
+   - Startup HTTP 500 server error: Asserts 500 error during session check displays server error banner and blocks protected content.
+   - Startup HTTP 401 unauthenticated check: Confirms 401 response cleanly forwards to `/login` without false error alerts.
+   - Recovery on retry: Verifies clicking "Retry Session Verification" dispatches `fetchCurrentUser`, enters loading state, and successfully renders protected routes when backend recovers.
+   - Protection isolation: Confirms protected hotel inventory content is never exposed during pending or error states.
+   - Login page connection alert: Displays connection error banner when startup session restoration fails while on `/login`.
+   - Login page retry action: Confirms clicking "Retry Session Check" dispatches `fetchCurrentUser`.
+   - Network failure distinction on login: Asserts network failure during form submission displays network error message and "Check Server Status" button, never confusing outages with invalid credentials.
+   - Server 500 distinction on login: Asserts HTTP 500 response displays server error message without blaming user credentials.
+   - Credential validation: Confirms genuine 401 credential mismatches display "Invalid email or password."
+   - Rate limiting alert: Asserts HTTP 429 response renders warning alert with rate-limit message.
+   - Successful login recovery: Verifies subsequent successful login after backend recovers redirects owner to targeted dashboard.
+17. **`sessionPolicy.test.js` (5 tests - Phase 5F-A3.1):**
+   - Service lifetime configuration: Asserts backend `session.service.js` enforces 7-day hard absolute lifetime (`ABSOLUTE_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000`).
+   - Service idle timeout: Asserts backend `session.service.js` enforces 2-hour sliding idle timeout (`IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000`).
+   - Service refresh throttle: Asserts backend `session.service.js` enforces 5-minute sliding refresh throttle (`REFRESH_THROTTLE_MS = 5 * 60 * 1000`).
+   - Cookie Max-Age alignment: Verifies `cookieHelper.js` defines 7-day cookie Max-Age (`SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60 = 604800` s) agreeing with database absolute expiry.
+   - Documentation audit: Scans all documentation files to verify zero outdated 24-hour absolute session assertions exist.
+18. **`screenshotScript.test.js` (6 tests - Phase 5F-A3.1):**
+   - File existence: Confirms `client/capture-login-screenshots.js` exists.
+   - Personal path exclusion: Asserts script contains zero user-specific hardcoded directory paths (`C:\Users\...`).
+   - Project-relative default output: Verifies default output path resolves to `docs/screenshots/phase5f-a3`.
+   - Browser executable override: Confirms script inspects `PLAYWRIGHT_CHROME_PATH`, `CHROME_PATH`, and `BROWSER_EXECUTABLE_PATH`.
+   - Default Playwright resolution: Verifies script falls back to default Playwright browser resolution when no override is present.
+   - Optional artifact directory: Confirms script supports secondary artifact output through `ARTIFACT_SCREENSHOT_DIR`.
 
 ---
 
@@ -374,7 +400,7 @@ npm run test:unit
 npm run test:integration
 ```
 
-### Frontend Tests (186 tests):
+### Frontend Tests (208 tests):
 From the `client` directory:
 ```powershell
 # Run all frontend unit tests with Vitest
@@ -387,8 +413,8 @@ npm run test:watch
 ### Total Test Suite Count:
 - **Backend Unit Tests:** 272 passed (15 test suites)
 - **Backend Integration Tests:** 156 passed (63 hotel API + 18 auth/migrations + 75 auth API)
-- **Frontend Unit Tests:** 186 passed (15 test suites)
-- **Total Automated Tests:** **614 / 614 passed (100% pass rate)**
+- **Frontend Unit Tests:** 208 passed (18 test suites)
+- **Total Automated Tests:** **636 / 636 passed (100% pass rate)**
 
 ---
 

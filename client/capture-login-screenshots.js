@@ -7,16 +7,29 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DOCS_DIR = path.resolve(__dirname, '../docs/screenshots/phase5f-a3');
-const ARTIFACT_DIR = 'C:\\Users\\ELANGO\\.gemini\\antigravity\\brain\\2c8b7069-505b-4464-9e06-9427c75bd5ac\\screenshots';
+// Project-relative screenshot directory by default
+const DOCS_DIR = process.env.SCREENSHOT_OUTPUT_DIR
+  ? path.resolve(process.env.SCREENSHOT_OUTPUT_DIR)
+  : path.resolve(__dirname, '../docs/screenshots/phase5f-a3');
 
-for (const dir of [DOCS_DIR, ARTIFACT_DIR]) {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+// Optional secondary artifact directory (if configured via environment)
+const ARTIFACT_DIR = process.env.ARTIFACT_SCREENSHOT_DIR
+  ? path.resolve(process.env.ARTIFACT_SCREENSHOT_DIR)
+  : null;
+
+if (!fs.existsSync(DOCS_DIR)) {
+  fs.mkdirSync(DOCS_DIR, { recursive: true });
+}
+if (ARTIFACT_DIR && !fs.existsSync(ARTIFACT_DIR)) {
+  fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
 }
 
-const CHROME_PATH = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+// Optional browser executable path override from environment variable
+const browserExecutable =
+  process.env.PLAYWRIGHT_CHROME_PATH ||
+  process.env.CHROME_PATH ||
+  process.env.BROWSER_EXECUTABLE_PATH ||
+  undefined;
 
 async function main() {
   console.log('[SCREENSHOT] Starting in-process Vite server on port 5174...');
@@ -28,10 +41,15 @@ async function main() {
   console.log('[SCREENSHOT] Vite server listening at http://localhost:5174');
 
   console.log('[SCREENSHOT] Launching browser...');
-  const browser = await chromium.launch({
-    executablePath: fs.existsSync(CHROME_PATH) ? CHROME_PATH : undefined,
-    headless: true,
-  });
+  const launchOptions = { headless: true };
+  if (browserExecutable && fs.existsSync(browserExecutable)) {
+    console.log(`[SCREENSHOT] Using browser executable: ${browserExecutable}`);
+    launchOptions.executablePath = browserExecutable;
+  } else {
+    console.log('[SCREENSHOT] Using default Playwright browser resolution');
+  }
+
+  const browser = await chromium.launch(launchOptions);
 
   const viewports = [
     { name: 'login-desktop-1440', width: 1440, height: 900, desc: 'Desktop 1440px' },
@@ -54,10 +72,12 @@ async function main() {
     await page.waitForTimeout(600);
 
     const docsPath = path.join(DOCS_DIR, `${vp.name}.png`);
-    const artifactPath = path.join(ARTIFACT_DIR, `${vp.name}.png`);
-
     await page.screenshot({ path: docsPath, fullPage: false });
-    fs.copyFileSync(docsPath, artifactPath);
+
+    if (ARTIFACT_DIR) {
+      const artifactPath = path.join(ARTIFACT_DIR, `${vp.name}.png`);
+      fs.copyFileSync(docsPath, artifactPath);
+    }
 
     console.log(`[SCREENSHOT] Saved: ${docsPath}`);
     await page.close();
@@ -73,9 +93,11 @@ async function main() {
   await errorPage.waitForTimeout(500);
 
   const errorDocsPath = path.join(DOCS_DIR, 'login-errors-desktop-1440.png');
-  const errorArtifactPath = path.join(ARTIFACT_DIR, 'login-errors-desktop-1440.png');
   await errorPage.screenshot({ path: errorDocsPath, fullPage: false });
-  fs.copyFileSync(errorDocsPath, errorArtifactPath);
+  if (ARTIFACT_DIR) {
+    const errorArtifactPath = path.join(ARTIFACT_DIR, 'login-errors-desktop-1440.png');
+    fs.copyFileSync(errorDocsPath, errorArtifactPath);
+  }
   await errorPage.close();
 
   await browser.close();

@@ -4,10 +4,15 @@ import { useDispatch, useSelector } from 'react-redux';
 import { Helmet } from 'react-helmet-async';
 import {
   loginUser,
+  fetchCurrentUser,
   clearAuthError,
   selectIsAuthenticated,
   selectAuthStatus,
   selectAuthError,
+  selectAuthErrorType,
+  selectConnectionError,
+  selectConnectionErrorMessage,
+  selectSessionExpired,
   selectAuth,
 } from '../store/authSlice';
 
@@ -30,6 +35,10 @@ export function LoginPage() {
   const isAuthenticated = useSelector(selectIsAuthenticated);
   const status = useSelector(selectAuthStatus);
   const serverError = useSelector(selectAuthError);
+  const errorType = useSelector(selectAuthErrorType);
+  const connectionError = useSelector(selectConnectionError);
+  const connectionErrorMessage = useSelector(selectConnectionErrorMessage);
+  const sessionExpired = useSelector(selectSessionExpired);
   const auth = useSelector(selectAuth);
 
   const [email, setEmail] = useState('');
@@ -55,7 +64,7 @@ export function LoginPage() {
       isFirstRender.current = false;
       return;
     }
-    if (serverError) {
+    if (serverError || connectionError) {
       dispatch(clearAuthError());
     }
   }, [email, password]);
@@ -131,8 +140,8 @@ export function LoginPage() {
             </p>
           </div>
 
-          {/* Session Expiration or Server Error Notice */}
-          {auth?.sessionExpired && (
+          {/* 1. Session Expiration Notice */}
+          {sessionExpired && (
             <div className="login-alert login-alert-warning" role="alert">
               <svg className="login-alert-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -141,12 +150,72 @@ export function LoginPage() {
             </div>
           )}
 
-          {serverError && !auth?.sessionExpired && (
+          {/* 2. Startup Session Verification Outage Notice */}
+          {connectionError && !sessionExpired && (
             <div className="login-alert login-alert-danger" role="alert">
               <svg className="login-alert-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <span>{serverError}</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', width: '100%' }}>
+                <span>{connectionErrorMessage || 'Authentication service is currently unavailable. Please check your network connection.'}</span>
+                <button
+                  type="button"
+                  className="login-retry-action-btn"
+                  onClick={() => dispatch(fetchCurrentUser())}
+                  style={{
+                    alignSelf: 'flex-start',
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                    color: 'inherit',
+                    textDecoration: 'underline',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    fontSize: '0.85rem',
+                  }}
+                >
+                  Retry Session Check
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 3. Form Submission Errors (Rate Limiting vs Server/Network vs Invalid Credentials) */}
+          {serverError && !sessionExpired && (
+            <div
+              className={`login-alert ${errorType === 'rate_limit' ? 'login-alert-warning' : 'login-alert-danger'}`}
+              role="alert"
+            >
+              <svg className="login-alert-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                {errorType === 'rate_limit' ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                ) : (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                )}
+              </svg>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', width: '100%' }}>
+                <span>{serverError}</span>
+                {(errorType === 'network' || errorType === 'server') && (
+                  <button
+                    type="button"
+                    className="login-retry-action-btn"
+                    onClick={() => dispatch(fetchCurrentUser())}
+                    style={{
+                      alignSelf: 'flex-start',
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      color: 'inherit',
+                      textDecoration: 'underline',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    Check Server Status
+                  </button>
+                )}
+              </div>
             </div>
           )}
 

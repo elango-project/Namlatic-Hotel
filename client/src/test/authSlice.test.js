@@ -37,9 +37,12 @@ describe('Redux authSlice (Phase 5F-A3)', () => {
         status: 'idle',
         isAuthenticated: false,
         error: null,
+        errorType: null,
         initialized: false,
         sessionExpired: false,
         connectionError: false,
+        connectionErrorMessage: null,
+        retryAfter: null,
       });
     });
 
@@ -185,6 +188,7 @@ describe('Redux authSlice (Phase 5F-A3)', () => {
       expect(result.payload).toEqual({
         message: 'Invalid email or password.',
         status: 401,
+        errorType: 'credentials',
         retryAfter: undefined,
       });
     });
@@ -266,6 +270,7 @@ describe('Redux authSlice (Phase 5F-A3)', () => {
 
       expect(result.payload).toEqual({
         unauthenticated: true,
+        status: 401,
         message: 'No active session.',
       });
     });
