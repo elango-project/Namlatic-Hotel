@@ -57,21 +57,37 @@ function resetPool() {
 }
 
 /**
- * Returns a dedicated pool for schema migrations if MIGRATION_DATABASE_URL was configured,
- * or falls back to the active application pool.
+ * Returns a dedicated pool for schema migrations.
+ * In production, MIGRATION_DATABASE_URL is strictly required and will fail closed if missing.
+ * In development, safely falls back to the active application pool.
+ *
+ * @param {Record<string, string|undefined>} [rawEnv=process.env]
  * @returns {import('pg').Pool}
  */
-function getMigrationPool() {
+function getMigrationPool(rawEnv = process.env) {
   if (migrationPoolInstance) {
     return migrationPoolInstance;
   }
-  if (env.migrationPoolConfig) {
-    migrationPoolInstance = new Pool(env.migrationPoolConfig);
+
+  const nodeEnv = rawEnv.NODE_ENV || env.nodeEnv || 'development';
+  const isProduction = nodeEnv === 'production';
+
+  const migrationConfig = env.validateMigrationDatabaseConfig(rawEnv, { forMigration: true });
+
+  if (migrationConfig.isUsingMigrationUrl && migrationConfig.migrationPoolConfig) {
+    migrationPoolInstance = new Pool(migrationConfig.migrationPoolConfig);
     migrationPoolInstance.on('error', (err) => {
       console.error('[DB MIGRATE] Unexpected error on idle migration client:', err.message);
     });
     return migrationPoolInstance;
   }
+
+  if (isProduction) {
+    throw new Error(
+      'In production, MIGRATION_DATABASE_URL is required to execute database migrations. Production migrations cannot fall back to the restricted application runtime role (DATABASE_URL).'
+    );
+  }
+
   return activePool;
 }
 
@@ -85,4 +101,22 @@ async function closeMigrationPool() {
   }
 }
 
-module.exports = { pool, query, setPool, resetPool, getMigrationPool, closeMigrationPool };
+/**
+ * Resets the migration pool instance (used for test teardown and isolation).
+ */
+function resetMigrationPool() {
+  if (migrationPoolInstance) {
+    migrationPoolInstance.end().catch(() => {});
+    migrationPoolInstance = null;
+  }
+}
+
+module.exports = {
+  pool,
+  query,
+  setPool,
+  resetPool,
+  getMigrationPool,
+  closeMigrationPool,
+  resetMigrationPool,
+};

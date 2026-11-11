@@ -26,9 +26,10 @@ async function ensureMigrationsTable(client) {
  * protected by a pinned-client session advisory lock to prevent race conditions.
  *
  * @param {import('pg').PoolClient | import('pg').Pool} [customTarget] - Optional client or pool
+ * @param {Record<string, string|undefined>} [rawEnv=process.env] - Optional environment map
  * @returns {Promise<{ applied: string[], skipped: string[], locked?: boolean }>}
  */
-async function runMigrations(customTarget = null) {
+async function runMigrations(customTarget = null, rawEnv = process.env) {
   let client;
   let shouldRelease = false;
 
@@ -42,7 +43,7 @@ async function runMigrations(customTarget = null) {
     shouldRelease = false;
   } else {
     // Acquire dedicated client from migration pool (configured via MIGRATION_DATABASE_URL or fallback)
-    const targetPool = getMigrationPool();
+    const targetPool = getMigrationPool(rawEnv);
     client = await targetPool.connect();
     shouldRelease = true;
   }

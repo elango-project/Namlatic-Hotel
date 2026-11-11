@@ -1083,13 +1083,16 @@ A declaration file at the repository root defines the backend service for Render
 - `runtime: node` with `engines: { "node": ">=22.0.0" }`
 - `rootDir: server`, `buildCommand: npm install`, `startCommand: npm start`
 - `healthCheckPath: /api/health`
-- `envVars` mapped with `sync: false` for all secrets (`DATABASE_URL`, `MIGRATION_DATABASE_URL`, `BACKEND_PROXY_SECRET`, `R2_*`, `CORS_ORIGIN`).
+- `envVars` mapped with `sync: false` for all secrets (`DATABASE_URL`, `BACKEND_PROXY_SECRET`, `R2_*`, `CORS_ORIGIN`).
+- **Credential Isolation Guarantee (Phase 5F-B.2):** `MIGRATION_DATABASE_URL` is strictly excluded from `render.yaml`. The long-running web process receives only the restricted `namlatic_app` credentials (`DATABASE_URL`), ensuring elevated DDL capabilities are never present in the web server runtime.
 
-### 14.4 Production Deployment Configuration & Least-Privilege Role Separation (Phase 5F-B.1)
+### 14.4 Production Deployment Configuration & Least-Privilege Role Separation (Phases 5F-B.1 & 5F-B.2)
 - **Database Least-Privilege Role Architecture:**
-  - **Schema Migrator Role (`namlatic_migrator`):** Dedicated PostgreSQL role granted DDL privileges on schema `public`. It owns application tables and the `schema_migrations` audit ledger. Connected via optional `MIGRATION_DATABASE_URL` (enforcing `sslmode=require` in production with conservative connection limits `max: 2`).
+  - **Schema Migrator Role (`namlatic_migrator`):** Dedicated PostgreSQL role granted DDL privileges on schema `public`. It owns application tables and the `schema_migrations` audit ledger. Connected via `MIGRATION_DATABASE_URL` (enforcing `sslmode=require` in production with conservative connection limits `max: 2`). Supplied exclusively to ephemeral migration execution environments (protected CI/CD deploy job or secure operator workstation).
   - **Runtime Application Role (`namlatic_app`):** Strictly restricted runtime role used by the Express backend for day-to-day operations. Possesses DML privileges only (`SELECT`, `INSERT`, `UPDATE`, `DELETE` on tables, `USAGE`, `SELECT`, `UPDATE` on sequences configured via `ALTER DEFAULT PRIVILEGES`). Has zero schema `CREATE`, `DROP`, or DDL permissions, preventing arbitrary schema tampering even in the event of an application SQL vulnerability. Connects via `DATABASE_URL`.
-  - **Fallback Semantics:** If `MIGRATION_DATABASE_URL` is omitted (standard in local development), `server/src/database/migrate.js` falls back gracefully to `DATABASE_URL`.
+  - **Production Fail-Closed Enforcement (Phase 5F-B.2):** In production (`NODE_ENV === 'production'`), `server/src/database/migrate.js` **strictly requires** `MIGRATION_DATABASE_URL` and fails closed immediately if absent. It **never falls back to `DATABASE_URL`** in production, preventing unintended DDL execution under the restricted runtime role.
+  - **Local Development Fallback:** In non-production environments (`NODE_ENV !== 'production'`), if `MIGRATION_DATABASE_URL` is omitted, `migrate.js` safely falls back to `DATABASE_URL` for local developer convenience.
+  - **Owner Bootstrap Separation:** Administrative owner account bootstrapping (`server/src/scripts/bootstrap-owner.js`) continues to use `DATABASE_URL` with the restricted runtime role (`namlatic_app`), because inserting user records is an application-level DML operation requiring zero DDL privileges.
 - **Cloudflare R2 Public-Read Delivery Model:**
   - Objects are served publicly over HTTPS via a custom domain or `r2.dev` subdomain (`R2_PUBLIC_BASE_URL`).
   - Bucket writes, updates, and deletions require authenticated backend S3 credentials (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`).
@@ -1099,5 +1102,7 @@ A declaration file at the repository root defines the backend service for Render
   - **Render Free-Tier Constraints:** 15-minute idle inactivity sleep, 50–90 second cold start latency, ephemeral disks (local storage wiped on sleep/redeploy—making R2 mandatory), and 750 shared free hours. Free tier suitable for testing/demo; Render Starter ($7/mo) recommended for continuous commercial uptime.
   - **Vercel Hobby Plan Terms:** Vercel Hobby is strictly for personal, non-commercial use. Commercial hotel operations require Vercel Pro.
   - **Empirical Proxy Verification (`TRUST_PROXY`):** `TRUST_PROXY=1` trusts Render's reverse proxy hop. When proxied through Vercel's edge, empirical verification via live request logging (`req.ip`, `req.ips`, `X-Forwarded-For`) is required to ensure rate limiting binds to the authentic client IP without being spoofable or artificially throttled.
+- **Session Cookie Architecture Agreement:**
+  - Consistent across code and documentation: `buildSessionCookie` sets `SameSite=Lax`, `HttpOnly`, `Path=/`, and `Secure` (with `__Host-` prefix in production). Defended against CSRF through defense-in-depth tokenless Fetch Metadata (`Sec-Fetch-Site`) and `X-Requested-With` header enforcement.
 
 *For the complete deployment runbook, environment-variable mapping matrix, and provider setup guides, refer to [Production Deployment Guide](DEPLOYMENT.md).*

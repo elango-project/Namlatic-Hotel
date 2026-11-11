@@ -214,16 +214,36 @@ function validateDatabaseConfig(rawEnv = process.env) {
 /**
  * Validates migration database configuration.
  * Permits a dedicated migration connection string (MIGRATION_DATABASE_URL)
- * with elevated DDL privileges (namlatic_migrator), while allowing safe fallback
- * to DATABASE_URL in local development or if MIGRATION_DATABASE_URL is unset.
+ * with elevated DDL privileges (namlatic_migrator).
  *
- * @param {Record<string, string|undefined>} rawEnv
+ * In production:
+ * - When forMigration: true (migration execution context), MIGRATION_DATABASE_URL is strictly MANDATORY.
+ *   Fails closed if absent, preventing accidental execution under the restricted runtime role (DATABASE_URL).
+ * - Enforces SSL/TLS (sslmode=require or verify-full).
+ * - Rejects localhost/loopback addresses.
+ * - Rejects empty passwords.
+ * - Enforces dedicated migration role (default 'namlatic_migrator' or MIGRATION_DB_USER),
+ *   strictly rejecting the restricted runtime user 'namlatic_app'.
+ *
+ * In development:
+ * - Falls back gracefully when MIGRATION_DATABASE_URL is omitted.
+ *
+ * @param {Record<string, string|undefined>} [rawEnv=process.env]
+ * @param {{ forMigration?: boolean }} [options={}]
  * @returns {{ isUsingMigrationUrl: boolean, migrationDatabaseUrl: string|null, migrationPoolConfig: object|null, migrationUser: string|null }}
  */
-function validateMigrationDatabaseConfig(rawEnv = process.env) {
+function validateMigrationDatabaseConfig(rawEnv = process.env, options = {}) {
   const nodeEnv = rawEnv.NODE_ENV || 'development';
   const isProduction = nodeEnv === 'production';
+  const forMigration = options.forMigration ?? false;
   const rawMigrationUrl = rawEnv.MIGRATION_DATABASE_URL ? rawEnv.MIGRATION_DATABASE_URL.trim() : null;
+
+  // In production migration execution, MIGRATION_DATABASE_URL is strictly required
+  if (isProduction && forMigration && !rawMigrationUrl) {
+    throw new Error(
+      'In production, MIGRATION_DATABASE_URL is required to execute database migrations. Production migrations cannot fall back to the restricted application runtime role (DATABASE_URL).'
+    );
+  }
 
   if (rawMigrationUrl) {
     const parsed = parseDatabaseUrl(rawMigrationUrl);
@@ -245,6 +265,22 @@ function validateMigrationDatabaseConfig(rawEnv = process.env) {
       }
       if (!parsed.sslmode || (parsed.sslmode !== 'require' && parsed.sslmode !== 'verify-full')) {
         throw new Error('In production, MIGRATION_DATABASE_URL must explicitly specify an encrypted SSL mode (e.g. ?sslmode=require).');
+      }
+
+      // Verify intended migration role
+      const expectedMigrator = rawEnv.MIGRATION_DB_USER ? rawEnv.MIGRATION_DB_USER.trim() : 'namlatic_migrator';
+      const appRuntimeUser = rawEnv.DB_USER ? rawEnv.DB_USER.trim() : 'namlatic_app';
+
+      if (parsed.username === appRuntimeUser || parsed.username === 'namlatic_app') {
+        throw new Error(
+          'In production, MIGRATION_DATABASE_URL cannot use the restricted application runtime role ("namlatic_app"). A dedicated migration role with DDL privileges is required.'
+        );
+      }
+
+      if (parsed.username !== expectedMigrator) {
+        throw new Error(
+          `In production, MIGRATION_DATABASE_URL must connect as the designated migration role ("${expectedMigrator}"). Received: "${parsed.username}".`
+        );
       }
     }
 
@@ -558,7 +594,7 @@ function parseAndValidateEnv(rawEnv = process.env) {
   const bodyLimit = rawEnv.BODY_LIMIT || '10kb';
 
   const dbConfig = validateDatabaseConfig(rawEnv);
-  const migrationDbConfig = validateMigrationDatabaseConfig(rawEnv);
+  const migrationDbConfig = validateMigrationDatabaseConfig(rawEnv, { forMigration: false });
 
   const mediaStorageDriver = parseMediaStorageDriver(rawEnv, nodeEnv);
   const r2Config = mediaStorageDriver === 'r2' ? parseR2Config(rawEnv, nodeEnv) : null;

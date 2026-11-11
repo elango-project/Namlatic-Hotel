@@ -32,13 +32,14 @@ Built entirely using Node.js's built-in `node:test` framework to avoid bloating 
    - Maps raw PostgreSQL server-side aggregation rows to numeric types and strings.
    - Handles empty database state safely (`0` count, `0.00` rates) without `NaN`.
    - Preserves exact decimal precision without IEEE 754 floating-point distortion.
-4. **`database.config.test.js` (40 tests - Phases 5B & 5F-B.1):**
+4. **`database.config.test.js` (49 tests - Phases 5B, 5F-B.1 & 5F-B.2):**
    - DATABASE_URL parsing: Credentials, host, port, database name, and query parameter handling.
    - SSL/TLS configuration: `sslmode=require`, `sslmode=prefer`, `sslmode=disable`, rejectUnauthorized flag, and Neon Server Name Indication (SNI).
    - Channel binding semantics: Validates `disable`, `prefer` (with SCRAM-SHA-256-PLUS), and strict rejection of unsupported `require`.
    - Discrete environment fallback: Preserves local development compatibility (`DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, `DB_NAME`).
    - Connection pool sizing and idle timeout configuration.
    - Migration Database Configuration & Role Separation (Phase 5F-B.1): Validates dedicated `MIGRATION_DATABASE_URL` parsing, conservative migration pool limit (`max: 2`), production SSL enforcement (`sslmode=require`), localhost rejection, and non-empty password validation.
+   - Migration Credential Isolation & Fail-Closed Policy (Phase 5F-B.2): Verifies that production migrations require `MIGRATION_DATABASE_URL` and fail closed when absent, proves production migrations never fall back to `DATABASE_URL`, verifies rejection of runtime role `namlatic_app` and unassigned roles for migrations, verifies local development fallback remains functional, proves `render.yaml` never declares migrator credentials, verifies normal backend configuration works without migration credentials, and confirms cookie implementation and documentation agree on `SameSite=Lax`.
 5. **`hardening.config.test.js` (23 tests - Phase 5C):**
    - Port & Host binding: Verifies default host `0.0.0.0` for Render, custom `HOST`, dynamic `PORT`, and safe logging.
    - CORS Allowlist: Parses comma-separated origin URLs, defaults to local dev origins, and strictly rejects wildcard `*` in production.
@@ -419,10 +420,10 @@ npm run test:watch
 ```
 
 ### Total Test Suite Count:
-- **Backend Unit Tests:** 283 passed (16 test suites)
+- **Backend Unit Tests:** 292 passed (16 test suites)
 - **Backend Integration Tests:** 156 passed (63 hotel API + 28 auth/migrations + 65 auth API)
 - **Frontend Unit Tests:** 208 passed (18 test suites)
-- **Total Automated Tests:** **647 / 647 passed (100% pass rate)**
+- **Total Automated Tests:** **656 / 656 passed (100% pass rate)**
 
 ---
 

@@ -30,8 +30,6 @@ services:
       # and marked sync: false to prevent leaking secrets in Git:
       - key: DATABASE_URL
         sync: false # Runtime application connection (namlatic_app restricted role)
-      - key: MIGRATION_DATABASE_URL
-        sync: false # Optional: schema migration connection (namlatic_migrator role)
       - key: CORS_ORIGIN
         sync: false
       - key: BACKEND_PROXY_SECRET

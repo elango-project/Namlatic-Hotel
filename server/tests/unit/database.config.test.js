@@ -1,5 +1,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
 const sasl = require('pg/lib/crypto/sasl');
 const {
   parseDatabaseUrl,
@@ -7,6 +9,9 @@ const {
   validateMigrationDatabaseConfig,
   parseAndValidateEnv,
 } = require('../../src/config/env');
+const { getMigrationPool, closeMigrationPool, resetMigrationPool } = require('../../src/config/db');
+const { runMigrations } = require('../../src/database/migrate');
+const { buildSessionCookie } = require('../../src/utils/cookieHelper');
 const { sanitizeDbError } = require('../../src/controllers/health.controller');
 
 describe('Unit Tests: Database Environment & SSL Configuration (Phase 5B)', () => {
@@ -658,6 +663,142 @@ describe('Unit Tests: Database Environment & SSL Configuration (Phase 5B)', () =
         },
         /In production, MIGRATION_DATABASE_URL must include a non-empty database password/
       );
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // 13. Migration Credential Isolation & Fail-Closed Policy (Phase 5F-B.2)
+  // --------------------------------------------------------------------------
+  describe('Migration Credential Isolation & Fail-Closed Policy (Phase 5F-B.2)', () => {
+    it('production migration with valid MIGRATION_DATABASE_URL succeeds and configures dedicated bounded pool', async () => {
+      resetMigrationPool();
+      const migratorUrl = 'postgresql://namlatic_migrator:MigratorPass123!@ep-host.aws.neon.tech/namlatic_prod?sslmode=require';
+      const pool = getMigrationPool({
+        NODE_ENV: 'production',
+        MIGRATION_DATABASE_URL: migratorUrl,
+      });
+
+      assert.ok(pool);
+      assert.equal(pool.options.connectionString, migratorUrl);
+      assert.equal(pool.options.max, 2);
+      await closeMigrationPool();
+    });
+
+    it('production migration without MIGRATION_DATABASE_URL fails safely with descriptive error', () => {
+      resetMigrationPool();
+      assert.throws(
+        () => {
+          validateMigrationDatabaseConfig({ NODE_ENV: 'production' }, { forMigration: true });
+        },
+        /In production, MIGRATION_DATABASE_URL is required to execute database migrations/
+      );
+
+      assert.throws(
+        () => {
+          getMigrationPool({ NODE_ENV: 'production' });
+        },
+        /In production, MIGRATION_DATABASE_URL is required to execute database migrations/
+      );
+    });
+
+    it('production migration never falls back to DATABASE_URL even when DATABASE_URL is valid', async () => {
+      resetMigrationPool();
+      const appUrl = 'postgresql://namlatic_app:AppPass123!@ep-host.aws.neon.tech/namlatic_prod?sslmode=require';
+      assert.throws(
+        () => {
+          getMigrationPool({
+            NODE_ENV: 'production',
+            DATABASE_URL: appUrl,
+          });
+        },
+        /In production, MIGRATION_DATABASE_URL is required to execute database migrations/
+      );
+
+      await assert.rejects(
+        () => runMigrations(null, {
+          NODE_ENV: 'production',
+          DATABASE_URL: appUrl,
+        }),
+        /In production, MIGRATION_DATABASE_URL is required to execute database migrations/
+      );
+    });
+
+    it('rejects MIGRATION_DATABASE_URL in production using runtime application role "namlatic_app"', () => {
+      assert.throws(
+        () => {
+          validateMigrationDatabaseConfig(
+            {
+              NODE_ENV: 'production',
+              MIGRATION_DATABASE_URL: 'postgresql://namlatic_app:AppPass123!@ep-host.aws.neon.tech/namlatic_prod?sslmode=require',
+            },
+            { forMigration: true }
+          );
+        },
+        /cannot use the restricted application runtime role/
+      );
+    });
+
+    it('rejects MIGRATION_DATABASE_URL in production if username does not match designated migration role', () => {
+      assert.throws(
+        () => {
+          validateMigrationDatabaseConfig(
+            {
+              NODE_ENV: 'production',
+              MIGRATION_DATABASE_URL: 'postgresql://unauthorized_role:SomePass123!@ep-host.aws.neon.tech/namlatic_prod?sslmode=require',
+            },
+            { forMigration: true }
+          );
+        },
+        /must connect as the designated migration role/
+      );
+    });
+
+    it('local development migration safely falls back to application pool when MIGRATION_DATABASE_URL is absent', () => {
+      resetMigrationPool();
+      const pool = getMigrationPool({
+        NODE_ENV: 'development',
+      });
+      assert.ok(pool);
+    });
+
+    it('render.yaml blueprint never declares MIGRATION_DATABASE_URL credential', () => {
+      const renderYamlPath = path.resolve(__dirname, '../../../render.yaml');
+      const renderYaml = fs.readFileSync(renderYamlPath, 'utf8');
+
+      assert.equal(renderYaml.includes('MIGRATION_DATABASE_URL'), false);
+      assert.equal(renderYaml.includes('DATABASE_URL'), true);
+      assert.equal(renderYaml.includes('namlatic_app'), true);
+    });
+
+    it('normal backend configuration and startup succeed in production without MIGRATION_DATABASE_URL', () => {
+      const prodEnv = parseAndValidateEnv({
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgresql://namlatic_app:AppPass123!@ep-host.aws.neon.tech/namlatic_prod?sslmode=require',
+        CORS_ORIGIN: 'https://namlatic.example.com',
+        BACKEND_PROXY_SECRET: 'a_very_long_cryptographically_secure_proxy_secret_12345',
+        MEDIA_STORAGE_DRIVER: 'r2',
+        R2_ACCOUNT_ID: '0123456789abcdef0123456789abcdef',
+        R2_ACCESS_KEY_ID: 'valid_test_r2_access_key_id',
+        R2_SECRET_ACCESS_KEY: 'valid_test_r2_secret_access_key',
+        R2_BUCKET_NAME: 'namlatic-hotel-media',
+        R2_PUBLIC_BASE_URL: 'https://assets.namlatic.com',
+      });
+
+      assert.equal(prodEnv.isUsingMigrationUrl, false);
+      assert.equal(prodEnv.migrationDatabaseUrl, null);
+      assert.equal(prodEnv.migrationPoolConfig, null);
+      assert.equal(prodEnv.databaseUrl.includes('namlatic_app'), true);
+    });
+
+    it('cookie implementation and deployment documentation agree on SameSite=Lax', () => {
+      const cookie = buildSessionCookie('dummy_session_token_123', { isProduction: true });
+      assert.equal(cookie.includes('SameSite=Lax'), true);
+      assert.equal(cookie.includes('SameSite=Strict'), false);
+
+      const deploymentDocPath = path.resolve(__dirname, '../../../docs/DEPLOYMENT.md');
+      const deploymentDoc = fs.readFileSync(deploymentDocPath, 'utf8');
+      assert.equal(deploymentDoc.includes('cookies with `SameSite=Lax`'), true);
+      assert.equal(deploymentDoc.includes('cookies with `SameSite=Strict`'), false);
     });
   });
 });

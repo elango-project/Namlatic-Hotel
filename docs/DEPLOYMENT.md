@@ -67,7 +67,7 @@ Below is the complete, canonical mapping of every environment variable across al
 | `PORT` | Render | Public | Auto | Production | Port bound by Express. Render automatically injects `PORT` (default `10000`). |
 | `HOST` | Render | Public | Optional | Production | Network interface binding. Must be `0.0.0.0` for Render container routing. |
 | `DATABASE_URL` | Render | **Secret** | **Yes** | Production | Encrypted Neon PostgreSQL connection URL for the **restricted runtime role** (`namlatic_app`). Must include `?sslmode=require` and optional `channel_binding=prefer`. Must not point to localhost or test databases. |
-| `MIGRATION_DATABASE_URL` | Migration Runner / CLI | **Secret** | **Yes** (Prod) | Production | Encrypted Neon PostgreSQL connection URL for the **schema migration role** (`namlatic_migrator`). Permitted to execute DDL. Falls back to `DATABASE_URL` in local development. |
+| `MIGRATION_DATABASE_URL` | Protected CI / Operator Workstation (NEVER Render) | **Secret** | **Yes** (Prod Migrations) | Production | Encrypted Neon PostgreSQL connection URL for the **schema migration role** (`namlatic_migrator`). Permitted to execute DDL. Required when running production migrations (`npm run db:migrate`); fails closed if missing. MUST NEVER be injected into the Render web service environment. Falls back to `DATABASE_URL` in local development. |
 | `DB_POOL_MAX` | Render | Public | Optional | Production | Maximum active PostgreSQL pool connections (default `10`). |
 | `DB_POOL_IDLE_TIMEOUT` | Render | Public | Optional | Production | Milliseconds before idle connection is released (default `30000`). Vital for serverless compute sleep. |
 | `DB_POOL_CONN_TIMEOUT` | Render | Public | Optional | Production | Milliseconds to wait before connection attempt times out (default `5000`). |
@@ -252,7 +252,7 @@ Browser requests are directed to `https://namlatic-hotel.vercel.app/api/...`:
 - Vercel routes `/api/(.*)` to `${BACKEND_ORIGIN}/api/$1`.
 - Vercel sets request header `x-vercel-proxy-secret` to `$BACKEND_PROXY_SECRET`.
 - Vercel disables rewrite caching via `x-vercel-enable-rewrite-caching: 0`.
-- Browser treats cookies (`__Host-namlatic_session`) as first-party, same-origin cookies with `SameSite=Strict`.
+- Browser treats cookies (`__Host-namlatic_session`) as first-party, same-origin cookies with `SameSite=Lax`.
 
 #### C. Security Headers
 Configured in `client/vercel.json` for all routes:
@@ -284,11 +284,50 @@ Follow this strict chronological order during initial production setup:
 4. Record `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`.
 5. Enable Public Access (R2.dev subdomain or custom domain) and record `R2_PUBLIC_BASE_URL`.
 
-### Step 3: Run Production Database Migrations
-Run the versioned migrations using the dedicated migration role:
+### Step 3: Secure Production Migration Execution Workflow
+
+Database migrations execute DDL statements (`CREATE TABLE`, `ALTER TABLE`, `CREATE INDEX`, etc.) and require the elevated `namlatic_migrator` role. To maintain the least-privilege boundary, **`MIGRATION_DATABASE_URL` must NEVER be declared or stored in the long-running Render web service environment**.
+
+Two independent database connections govern production operations:
+- **`DATABASE_URL`:** Restricted runtime connection for `namlatic_app` (DML only: `SELECT`, `INSERT`, `UPDATE`, `DELETE`). Stored in Render Web Service environment.
+- **`MIGRATION_DATABASE_URL`:** Elevated schema migration connection for `namlatic_migrator` (DDL privileges). Supplied strictly to an isolated, ephemeral execution environment.
+
+#### Production Migration Procedure:
+Migrations must be executed either via a **protected CI/CD pipeline** (recommended for production) or from an **authorized, secure operator workstation**.
+
+**Option A: Protected CI/CD Pipeline (Automated Deployments):**
+In GitHub Actions or your deployment pipeline, configure `MIGRATION_DATABASE_URL` as a protected environment secret. An ephemeral migration job runs prior to web-service deployment:
 ```bash
-MIGRATION_DATABASE_URL="postgresql://namlatic_migrator:password@ep-host.aws.neon.tech/namlatic_prod?sslmode=require&channel_binding=prefer" node server/src/database/migrate.js
+npm run db:migrate
 ```
+The runner terminates immediately upon completion, ensuring DDL credentials are never accessible to the long-running web process.
+
+**Option B: Secure Operator Workstation (Manual / Initial Setup):**
+When running initial setup or hotfix migrations manually from a workstation:
+1. **Never commit credentials to Git or save them in repository files.**
+2. **Never print connection strings to standard output or logs.**
+3. **Avoid saving raw credentials in terminal history files.** Use interactive prompts or transient variables:
+
+*In Bash / Linux:*
+```bash
+# Note: leading space prevents command from being recorded in bash history:
+ read -s -p "Enter MIGRATION_DATABASE_URL: " MIGRATION_DATABASE_URL; echo ""
+ export MIGRATION_DATABASE_URL
+ npm run db:migrate
+ unset MIGRATION_DATABASE_URL
+```
+
+*In Windows PowerShell:*
+```powershell
+# Prompt securely without echoing password to screen or persistent command history:
+$migUrl = Read-Host "Enter MIGRATION_DATABASE_URL" -AsSecureString
+$bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($migUrl)
+$plainMigUrl = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+$env:MIGRATION_DATABASE_URL = $plainMigUrl
+npm run db:migrate
+$env:MIGRATION_DATABASE_URL = $null
+```
+
 Expected output:
 ```
 [MIGRATE] Starting database migrations...
@@ -300,6 +339,11 @@ Expected output:
 [MIGRATE] Successfully applied: 003_correct_session_expiry_indexes.sql
 [MIGRATE] Completed. Applied: 3, Skipped (Already applied): 0
 ```
+
+> [!CAUTION]
+> **Production Fail-Closed Enforcement:** If `MIGRATION_DATABASE_URL` is omitted when `NODE_ENV=production`, `server/src/database/migrate.js` **fails closed immediately** with an error:
+> `In production, MIGRATION_DATABASE_URL is required to execute database migrations. Production migrations cannot fall back to the restricted application runtime role (DATABASE_URL).`
+> It will never silently fall back to `DATABASE_URL` or attempt DDL under the restricted runtime role.
 
 ### Step 4: Bootstrap the Singleton Owner Account
 Bootstrap the single authorized hotel owner account:
@@ -352,12 +396,14 @@ Expected output:
 
 ---
 
-## 5. Security Decision Record (SDR — Phase 5F-B.1)
+## 5. Security Decision Record (SDR — Phases 5F-B.1 & 5F-B.2)
 
 | Decision Item | Chosen Approach | Rejected Alternative | Security Rationale |
 |---|---|---|---|
 | **Database Roles** | Two separate roles: `namlatic_migrator` (DDL) and `namlatic_app` (DML only) | Single application user with full DDL/schema privileges | Eliminates risk of SQL injection or runtime exploits creating, dropping, or altering tables or stored procedures. |
-| **Migration Connections** | Dedicated `MIGRATION_DATABASE_URL` with fallback to `DATABASE_URL` in local dev | Passing runtime app credentials to migration runner | Ensures DDL credentials are only supplied when running administrative migrations, never held in long-running web worker memory. |
+| **Migration Credential Isolation (Phase 5F-B.2)** | `MIGRATION_DATABASE_URL` strictly isolated to ephemeral migration runners (CI/workstation); completely removed from Render web service environment | Injecting DDL credentials into long-running Render web service container | Long-running web processes must never hold elevated DDL privileges in memory. Prevents application exploits from acquiring DDL capabilities. |
+| **Migration Fail-Closed Policy (Phase 5F-B.2)** | Production migrations strictly require `MIGRATION_DATABASE_URL` and fail closed if absent; never falls back to `DATABASE_URL` | Silently falling back to `DATABASE_URL` in production | Prevents execution of schema migrations under the unprivileged runtime role, ensuring predictable deployments and immediate failure signaling. |
+| **Cookie SameSite Policy** | `SameSite=Lax` with `__Host-` prefix and tokenless CSRF defense | Claiming `SameSite=Strict` in documentation | Reflects actual implementation in `cookieHelper.js` where `SameSite=Lax` ensures top-level navigation reliability while CSRF defense is guaranteed by Fetch Metadata and `X-Requested-With`. |
 | **R2 Storage Access** | Public object read delivery via custom domain; authenticated backend write/delete | Describing bucket as "private" | Accurately describes access topology: bucket is read-accessible for sanitized images with known keys; private credentials used strictly for S3 operations. |
 | **Image Sanitization** | Mandatory Sharp EXIF/GPS stripping before PutObject | Storing raw client uploads directly in R2 | Prevents exfiltration of owner/guest GPS coordinates, device serial numbers, and metadata leakage to the public internet. |
 | **Reverse Proxy Topology** | Configurable `TRUST_PROXY` verified empirically via live request evidence | Hardcoded `trust proxy: 1` assumption | Multi-hop proxy chains (Vercel + Render) may require 2 hops; blind assumption could enable IP spoofing or break rate limiting. |
