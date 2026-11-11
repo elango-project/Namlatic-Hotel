@@ -28,8 +28,8 @@ function createCorsOptions(allowedOrigins = []) {
       return callback(corsError, false);
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-    credentials: false, // Explicitly false since cookies/sessions are not used
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'x-vercel-proxy-secret'],
+    credentials: true, // Enables transmitting session cookies (__Host-namlatic_session)
     maxAge: 86400, // 24 hours preflight cache
     optionsSuccessStatus: 204,
   };

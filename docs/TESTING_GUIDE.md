@@ -81,6 +81,35 @@ Built entirely using Node.js's built-in `node:test` framework to avoid bloating 
    - Safety checks rejecting protected databases (`namlatic_hotel`, `postgres`, `production`, `neondb`), non-test database names, and names that do not match exact expected test database (`namlatic_hotel_test` or `TEST_DB_NAME`).
    - Explicit allowed-host enforcement rejecting unauthorized remote hosts while supporting custom CI hosts via `TEST_DB_ALLOWED_HOSTS`.
    - Successful validation and extraction of sanitized test database metadata (name, host, test role).
+10. **`cookieHelper.test.js` (16 tests - Phase 5F-A2.2):**
+    - `parseCookies`: Handles falsy, non-string, single, multiple, quoted values, URI decoding, and malformed encoding.
+    - `sanitizeIp`: Validates IPv4, IPv6, IPv4-mapped IPv6, and returns null for non-IP strings, port-appended IPs, or injection attempts.
+    - `truncateUserAgent`: Preserves <= 512 chars, truncates > 512 chars, and handles non-string values.
+    - Cookie header builders: Verifies `__Host-` prefix rules (Path=/, no Domain, HttpOnly, SameSite=Lax, Secure in production).
+11. **`proxySecret.middleware.test.js` (10 tests - Phase 5F-A2.2):**
+    - `timingSafeSecretCompare`: Constant-time comparison of matching secrets, rejection of differing secrets of same or different lengths without throwing.
+    - `verifyProxySecret`: Narrow probe exemption (`/health`, `/ready`), rejection of missing or invalid `x-vercel-proxy-secret` (HTTP 403), acceptance of current secret and old secret during rotation.
+12. **`csrf.middleware.test.js` (12 tests - Phase 5F-A2.2):**
+    - Safe HTTP methods bypass (`GET`, `HEAD`, `OPTIONS`).
+    - Custom header enforcement: Missing or invalid `X-Requested-With` rejected with HTTP 403; case-insensitive `XMLHttpRequest` accepted.
+    - Fetch Metadata defense: Rejection of `Sec-Fetch-Site: cross-site`.
+    - Origin & Referer validation: Rejection of `Origin: null`, rejection of untrusted origin, acceptance of trusted origin in `env.corsOrigins`, safe Referer fallback, and safe 403 rejection on malformed Referer (never HTTP 500).
+13. **`auth.middleware.test.js` (4 tests - Phase 5F-A2.2):**
+    - Cache prevention header: Injects `Cache-Control: private, no-store, no-cache, max-age=0, must-revalidate` unconditionally.
+    - Missing cookie rejection: HTTP 401 when `__Host-namlatic_session` is absent.
+    - Invalid session rejection: HTTP 401 when token is invalid or expired.
+    - Profile attachment: Populates `req.user`, `req.sessionId`, `req.rawSessionToken` on valid session.
+14. **`loginThrottler.test.js` (7 tests - Phase 5F-A2.2):**
+    - IP Rate Limiting: Blocks IP after 5 failed attempts with HTTP 429 and `retryAfter`.
+    - No Global Lockout: Legitimate owner from independent IP is never blocked by attacks on other IPs.
+    - Progressive Delays: 0ms for attempts 1-2, 1000ms for attempt 3, 2000ms for attempts 4-5+.
+    - Reset on success: Clears IP and pair records upon successful authentication.
+    - Bounded LRU store & Memory Benchmark: 10,000 entry limit, evicts oldest entry, and heap benchmark asserts < 25 MB growth under 10,000 entries.
+15. **`session.service.test.js` (7 tests - Phase 5F-A2.2):**
+    - Security Lifecycles: 7-day hard absolute lifetime (`expires_at`), 2-hour sliding idle timeout (`idle_expires_at`), 5-minute sliding refresh throttle (`REFRESH_THROTTLE_MS`).
+    - Token generation: Generates 256-bit (64 hex characters) cryptographically secure random tokens.
+    - Token hashing: Consistent lowercase SHA-256 hex digest, raw token never stored in database.
+    - Input validation: Safe rejection of null/non-string tokens without throwing.
 
 ---
 
@@ -127,6 +156,14 @@ Communicates over HTTP to an isolated Express test instance on port 5001 connect
   - One-time owner bootstrap CLI: Initial account creation, Argon2id verification of stored hash, non-overwriting behavior on subsequent runs, and race-condition safety under concurrent execution via advisory lock `pg_try_advisory_xact_lock`.
   - Administrative password recovery CLI: Updating owner password hash, revoking all active sessions atomically, and clean rejection when no owner exists.
   - Dedicated test database isolation & safe record tracking: Tests execute exclusively against `namlatic_hotel_test` via `getTestPool()`. All created test users are tracked by ID in `createdUserIds` and cleaned up strictly via `WHERE id = ANY($1::bigint[])`, eliminating destructive broad owner deletions (`DELETE FROM users WHERE role = 'owner'`). Zero modification or loss of existing hotel inventory records.
+- **Part 12 (Owner Authentication, Sessions & Route Protection - Phase 5F-A2.2, 38 tests in `tests/integration/auth.api.test.js`):**
+  - Health & readiness probes: `GET /api/health` and `GET /api/ready` succeed (HTTP 200) without proxy secret, without session cookies, and without CSRF headers.
+  - Reverse proxy secret verification: Rejection of missing `x-vercel-proxy-secret` (HTTP 403), rejection of invalid secret (HTTP 403), acceptance of matching secret.
+  - Tokenless CSRF defense: State-changing POST/PUT/DELETE requests missing `X-Requested-With: XMLHttpRequest` rejected (HTTP 403), `Origin: null` rejected (HTTP 403), untrusted Origin rejected (HTTP 403), `Sec-Fetch-Site: cross-site` rejected (HTTP 403), trusted Origin accepted.
+  - Owner login endpoint (`POST /api/auth/login`): Rejection of missing credentials (HTTP 400), invalid email syntax (HTTP 400), non-existent owner (HTTP 401 generic message), suspended owner (HTTP 401), wrong password (HTTP 401), successful login sets `__Host-namlatic_session` HttpOnly cookie and returns safe user profile without password hash, rate-limit triggering HTTP 429 when IP exceeds 5 failed attempts in 15 minutes.
+  - Session inspection (`GET /api/auth/me`): Rejection when cookie missing (HTTP 401), rejection of invalid/bogus token (HTTP 401), acceptance of valid session returning owner profile, cache-control header verification (`private, no-store, no-cache, max-age=0, must-revalidate`), idle timeout expiration (HTTP 401), absolute lifetime expiration (HTTP 401), and sliding idle extension when > 5 minutes have elapsed.
+  - Owner logout endpoint (`POST /api/auth/logout`): Revokes session in PostgreSQL, clears cookie in browser (`Max-Age=0`), subsequent `/me` returns HTTP 401, idempotent repeat logout succeeds cleanly.
+  - Private hotel route protection: Tests EVERY hotel endpoint (`GET /api/hotels`, `GET /api/hotels/stats`, `GET /api/hotels/:id`, `POST /api/hotels`, `PUT /api/hotels/:id`, `DELETE /api/hotels/:id`), confirming unauthenticated requests are blocked with HTTP 401 and direct requests without proxy secret are blocked with HTTP 403, while authenticated requests succeed with HTTP 200.
 
 ---
 
@@ -277,7 +314,7 @@ Built using **Vitest** + **React Testing Library** + **@testing-library/jest-dom
 
 ## 5. Running the Tests
 
-### Backend Tests (263 tests):
+### Backend Tests (373 tests):
 From the `server` directory:
 ```powershell
 # Run all backend tests (Unit tests + Integration tests)
@@ -301,10 +338,10 @@ npm run test:watch
 ```
 
 ### Total Test Suite Count:
-- **Backend Unit Tests:** 183 passed
-- **Backend Integration Tests:** 80 passed (63 hotel API + 17 auth/migrations)
-- **Frontend Unit Tests:** 139 passed
-- **Total Automated Tests:** **402 / 402 passed (100% pass rate)**
+- **Backend Unit Tests:** 255 passed (15 test suites)
+- **Backend Integration Tests:** 118 passed (63 hotel API + 17 auth/migrations + 38 auth API)
+- **Frontend Unit Tests:** 139 passed (11 test suites)
+- **Total Automated Tests:** **512 / 512 passed (100% pass rate)**
 
 ---
 

@@ -2,8 +2,12 @@ const { Router } = require('express');
 const hotelController = require('../controllers/hotel.controller');
 const { uploadHotelImage } = require('../middleware/upload.middleware');
 const { writeLimiter } = require('../middleware/rateLimiter.middleware');
+const { requireAuth } = require('../middleware/auth.middleware');
 
 const router = Router();
+
+// Enforce owner session authentication on ALL hotel endpoints
+router.use(requireAuth);
 
 // POST /api/hotels - Create hotel with multipart/form-data support (rate-limited writes)
 router.post('/', writeLimiter, uploadHotelImage, hotelController.create);

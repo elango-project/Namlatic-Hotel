@@ -4,9 +4,12 @@ const helmet = require('helmet');
 const path = require('path');
 const env = require('./config/env');
 const routes = require('./routes');
+const healthRoutes = require('./routes/health.routes');
 const errorHandler = require('./middleware/errorHandler');
 const { createCorsOptions } = require('./middleware/cors.middleware');
 const { generalLimiter } = require('./middleware/rateLimiter.middleware');
+const { verifyProxySecret } = require('./middleware/proxySecret.middleware');
+const { verifyTokenlessCsrf } = require('./middleware/csrf.middleware');
 
 const app = express();
 
@@ -44,10 +47,19 @@ app.use(
 /* ─── CORS Allowlist ─── */
 app.use(cors(createCorsOptions(env.corsOrigins)));
 
+/* ─── Health and Readiness Probes (Exempt from auth, proxy secret, and rate limiting) ─── */
+app.use('/api', healthRoutes);
+
+/* ─── Reverse Proxy Secret Verification (Vercel -> Render) ─── */
+app.use('/api', verifyProxySecret);
+
 /* ─── Rate Limiting (General API) ─── */
 if (env.rateLimit.enabled) {
   app.use('/api', generalLimiter);
 }
+
+/* ─── Tokenless CSRF Protection ─── */
+app.use('/api', verifyTokenlessCsrf);
 
 /* ─── Request Body Parsers with Explicit Size Limits ─── */
 app.use(express.json({ limit: env.bodyLimit }));
@@ -56,12 +68,12 @@ app.use(express.urlencoded({ extended: true, limit: env.bodyLimit }));
 /* ─── Static Uploads ─── */
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-/* ─── API Routes ─── */
+/* ─── API Routes (/api/auth, /api/hotels) ─── */
 app.use('/api', routes);
 
 /* ─── 404 Catch-All ─── */
 app.use((_req, res) => {
-  res.status(404).json({ status: 'error', message: 'Route not found' });
+  res.status(404).json({ status: 'error', statusCode: 404, message: 'Route not found' });
 });
 
 /* ─── Error Handler (must be last) ─── */

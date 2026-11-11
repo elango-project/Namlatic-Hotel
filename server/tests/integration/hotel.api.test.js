@@ -4,6 +4,9 @@ const { getTestPool, closeTestPool } = require('../helpers/testDb');
 const { pool, setPool, resetPool } = require('../../src/config/db');
 const app = require('../../src/app');
 const hotelService = require('../../src/services/hotel.service');
+const sessionService = require('../../src/services/session.service');
+const env = require('../../src/config/env');
+const { COOKIE_NAME } = require('../../src/utils/cookieHelper');
 const { safeDeleteHotelImage } = hotelService;
 const {
   setStorageService,
@@ -13,6 +16,22 @@ const {
 
 const PORT = 5001; // Separate port for test isolation
 let server;
+let testSessionToken = null;
+let testUserId = null;
+let newlyCreatedOwner = false;
+
+function getAuthHeaders(customHeaders = {}) {
+  const headers = {
+    'x-vercel-proxy-secret': env.backendProxySecret || 'test_proxy_secret_at_least_32_chars_long_12345',
+    'X-Requested-With': 'XMLHttpRequest',
+    'Origin': 'http://localhost:5173',
+    ...customHeaders,
+  };
+  if (testSessionToken) {
+    headers['Cookie'] = `${COOKIE_NAME}=${testSessionToken}`;
+  }
+  return headers;
+}
 
 const SRC_DIR = path.resolve(__dirname, '../../src');
 const UPLOAD_HOTELS_DIR = path.resolve(SRC_DIR, 'uploads/hotels');
@@ -60,6 +79,7 @@ async function postHotel(fields, fileBuffer = null, fileName = null, mimeType = 
 
   const res = await fetch(`${BASE_URL}/hotels`, {
     method: 'POST',
+    headers: getAuthHeaders(),
     body: form,
   });
 
@@ -70,13 +90,17 @@ async function postHotel(fields, fileBuffer = null, fileName = null, mimeType = 
 async function getHotels(params = {}) {
   const qs = new URLSearchParams(params).toString();
   const url = `${BASE_URL}/hotels${qs ? `?${qs}` : ''}`;
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: getAuthHeaders(),
+  });
   const body = await res.json().catch(() => null);
   return { status: res.status, body };
 }
 
 async function getHotelById(id) {
-  const res = await fetch(`${BASE_URL}/hotels/${id}`);
+  const res = await fetch(`${BASE_URL}/hotels/${id}`, {
+    headers: getAuthHeaders(),
+  });
   const body = await res.json().catch(() => null);
   return { status: res.status, body };
 }
@@ -94,6 +118,7 @@ async function putHotel(id, fields, fileBuffer = null, fileName = null, mimeType
 
   const res = await fetch(`${BASE_URL}/hotels/${id}`, {
     method: 'PUT',
+    headers: getAuthHeaders(),
     body: form,
   });
 
@@ -104,13 +129,16 @@ async function putHotel(id, fields, fileBuffer = null, fileName = null, mimeType
 async function deleteHotelReq(id) {
   const res = await fetch(`${BASE_URL}/hotels/${id}`, {
     method: 'DELETE',
+    headers: getAuthHeaders(),
   });
   const body = await res.json().catch(() => null);
   return { status: res.status, body };
 }
 
 async function getHotelStatsReq() {
-  const res = await fetch(`${BASE_URL}/hotels/stats`);
+  const res = await fetch(`${BASE_URL}/hotels/stats`, {
+    headers: getAuthHeaders(),
+  });
   const body = await res.json().catch(() => null);
   return { status: res.status, body };
 }
@@ -123,6 +151,26 @@ async function runIntegrationTests() {
   // Configure dedicated test database pool
   const testPool = getTestPool();
   setPool(testPool);
+
+  // Ensure an isolated test owner account and session exist for authenticated hotel tests
+  let ownerRes = await testPool.query("SELECT id FROM users WHERE role = 'owner' LIMIT 1");
+  let newlyCreatedOwner = false;
+  if (ownerRes.rows.length === 0) {
+    const testEmail = `test-hotel-owner-${Date.now()}@namlatic.com`;
+    ownerRes = await testPool.query(
+      `INSERT INTO users (email, password_hash, role, status)
+       VALUES ($1, $2, 'owner', 'active')
+       RETURNING id`,
+      [testEmail, '$argon2id$v=19$m=65536,t=3,p=1$7S25v70Yh/9mQ5XgR6oA4w$20O6uH3iV5/V0f9rE6W8aB1yN7M2zK4pL8tQ3uV5wY0']
+    );
+    newlyCreatedOwner = true;
+  }
+  testUserId = ownerRes.rows[0].id;
+  const sessionRes = await sessionService.createSession(
+    { userId: testUserId, ipAddress: '127.0.0.1', userAgent: 'IntegrationTestRunner' },
+    testPool
+  );
+  testSessionToken = sessionRes.rawToken;
 
   // Start isolated test server
   await new Promise((resolve) => {
@@ -1119,9 +1167,9 @@ async function runIntegrationTests() {
 
       const res = await fetch(`http://localhost:${PORT}/api/hotels`, {
         method: 'POST',
-        headers: {
+        headers: getAuthHeaders({
           'Content-Type': 'application/json',
-        },
+        }),
         body: JSON.stringify(largePayload),
       });
       const body = await res.json().catch(() => null);
@@ -1621,7 +1669,12 @@ async function runIntegrationTests() {
     resetStorageService();
   } finally {
     resetStorageService();
-    // Clean up created test hotels from database
+    // Clean up created test owner and test hotels from database
+    if (newlyCreatedOwner && testUserId) {
+      await pool.query('DELETE FROM users WHERE id = $1', [testUserId]).catch(() => {});
+    } else if (testSessionToken) {
+      await sessionService.revokeSession(testSessionToken, pool).catch(() => {});
+    }
     if (createdHotelIds.length > 0) {
       console.log(`\nCleaning up ${createdHotelIds.length} test hotels from database...`);
       const cleanupQuery = `

@@ -30,6 +30,9 @@ const errorHandler = (err, _req, res, _next) => {
   }
 
   const statusCode = err.statusCode || err.status || 500;
+  if (err.retryAfter) {
+    res.setHeader('Retry-After', String(err.retryAfter));
+  }
   const message =
     process.env.NODE_ENV === 'production' && statusCode === 500
       ? 'Internal server error'

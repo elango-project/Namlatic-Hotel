@@ -825,7 +825,84 @@ To eliminate data destruction risks and enforce least-privilege database safety,
   7. Sanitized logging outputs only the database name, host, and test role, never connection strings or credentials.
 - **Non-Destructive Test Cleanup:** Broad deletion queries (such as `DELETE FROM users WHERE role = 'owner'`) are strictly eliminated. Instead, the test suite tracks all created test user IDs in memory (`createdUserIds`) and deletes only those temporary test records (`WHERE id = ANY($1::bigint[])`), completely eliminating the risk of erasing legitimate owner records.
 
-### 10.9 Status & Scope Boundaries
-Phase 5F-A2.1 and 5F-A2.1.1 implement the credential, database, testing isolation, and CLI infrastructure only.
-- HTTP login/logout endpoints, session cookie management (`__Host-namlatic_session`), CSRF middleware (`X-Requested-With`), timing-safe Vercel proxy-secret validation, and route protection for `/api/hotels/*` are scheduled for **Phase 5F-A2.2**.
-- The API write endpoints remain unauthenticated until Phase 5F-A2.2 is complete.
+### 10.9 Phase 5F-A2.1 Completion
+Phase 5F-A2.1 and 5F-A2.1.2 established the foundational credential schema, Argon2id hashing parameters, advisory-locked migrations, dedicated test database role isolation, and administrative CLI tools. Full HTTP session middleware, tokenless CSRF defense, reverse proxy secret verification, and hotel API route protection are implemented in **Phase 5F-A2.2**.
+
+---
+
+## 11. Owner Session Management, Tokenless CSRF & API Route Protection (Phase 5F-A2.2)
+
+Phase 5F-A2.2 completes backend authentication and route lockdown, guaranteeing that only an authenticated hotel owner accessing the portal through authorized origins can access hotel inventory, financials, and management APIs.
+
+### 11.1 PostgreSQL-Backed Split-Token Session Architecture
+- **Cryptographically Random Session Tokens:** When an owner authenticates, the server generates a 256-bit (32-byte) cryptographically secure random token (`crypto.randomBytes(32).toString('hex')` -> 64 hex characters).
+- **One-Way Verifier Hash Storage:** Raw tokens are **never** stored in the database. The database persists only the SHA-256 hex digest (`crypto.createHash('sha256').update(rawToken).digest('hex')`) in `sessions.token_hash`. If the database were ever compromised, attackers cannot extract active session tokens.
+- **Strict `__Host-` Cookie Construction:**
+  - Name: `__Host-namlatic_session`
+  - Flags: `HttpOnly`, `SameSite=Lax`, `Path=/`, no `Domain` attribute
+  - `Secure`: enforced in production (`NODE_ENV === 'production'`)
+  - Lifetime: 7 days (`Max-Age=604800`)
+- **Dual Sliding / Absolute Lifecycles:**
+  - **Hard Absolute Expiry:** 7 days (`expires_at = created_at + 7 days`).
+  - **Sliding Idle Timeout:** 2 hours of inactivity (`idle_expires_at = last_active_at + 2 hours`).
+  - **Refresh Throttling:** Sliding idle extensions are written to PostgreSQL at most once every 5 minutes (`REFRESH_THROTTLE_MS = 300,000 ms`), minimizing database write load during active browsing.
+  - **Absolute Ceiling:** Sliding extensions are strictly bounded by the hard absolute lifetime (`Math.min(now + 2h, expires_at)`).
+
+### 11.2 Authentication Endpoints
+1. **`POST /api/auth/login`:**
+   - Validates input format (rejects missing fields with HTTP 400; rejects payloads > 128 UTF-8 bytes).
+   - Consults `LoginThrottlerService`: enforces IP rate limiting (HTTP 429) and progressive delays without global account lockout.
+   - Queries `users` for active owner record.
+   - **Timing Equalization:** If the user does not exist or is inactive, executes `verifyPassword(DUMMY_HASH, password)` to equalize execution timing and defeat user enumeration.
+   - Bounded concurrency: Argon2id verification executes within `defaultArgonSemaphore` (max 2 active computations, 5 queued requests, 3s timeout -> HTTP 503).
+   - On success: resets failure count, creates PostgreSQL session record, sets `__Host-namlatic_session` cookie, returns `{ status: 'success', data: { user: { id, email, role } } }`.
+2. **`POST /api/auth/logout`:**
+   - Reads `__Host-namlatic_session` cookie.
+   - Idempotently revokes the session in PostgreSQL (`UPDATE sessions SET revoked_at = statement_timestamp() WHERE token_hash = $1`).
+   - Clears cookie in browser (`Max-Age=0`, `Expires=Thu, 01 Jan 1970 00:00:00 GMT`).
+   - Returns HTTP 200 `{ status: 'success', message: 'Logged out successfully.' }`.
+3. **`GET /api/auth/me`:**
+   - Extracts and hashes cookie token.
+   - Validates active status, absolute lifetime, idle lifetime, and absence of revocation.
+   - Updates `last_active_at` and `idle_expires_at` if 5 minutes have elapsed.
+   - Injects `Cache-Control: private, no-store, no-cache, max-age=0, must-revalidate`.
+   - Returns safe owner profile `{ status: 'success', data: { user: { id, email, role } } }`.
+
+### 11.3 Reverse Proxy Secret Middleware (`proxySecret.middleware.js`)
+- **Shared Origin Secret:** In production, Vercel edge routes inject `x-vercel-proxy-secret` using request-header transforms.
+- **Constant-Time Verification:** Compares client header against configured secret using `crypto.timingSafeEqual` over SHA-256 digests (`hashA` and `hashB` are always 32 bytes, preventing timing leaks and length-mismatch errors).
+- **Dual-Secret Rotation:** Checks `BACKEND_PROXY_SECRET` and optional `BACKEND_PROXY_SECRET_OLD` to enable zero-downtime secret rotation.
+- **Fail-Closed:** In production (`NODE_ENV === 'production'`), requests missing or providing invalid proxy secrets are rejected with HTTP 403 Forbidden.
+- **Narrow Orchestrator Bypass:** `GET /api/health` and `GET /api/ready` are explicitly exempt, allowing cloud health monitoring (Render / Neon) without credentials.
+
+### 11.4 Tokenless CSRF Defense Middleware (`csrf.middleware.js`)
+- **Safe Methods Bypass:** `GET`, `HEAD`, and `OPTIONS` bypass CSRF checks.
+- **Custom Header Enforcement:** All state-changing requests (`POST`, `PUT`, `DELETE`, `PATCH`) must supply `X-Requested-With: XMLHttpRequest` (case-insensitive). Standard cross-origin HTML forms and scripts cannot set custom headers without triggering a preflight rejection.
+- **Fetch Metadata Defense:** Rejects requests with `Sec-Fetch-Site: cross-site` with HTTP 403.
+- **Strict Origin & Referer Verification:**
+  - Explicitly rejects `Origin: null` (sandboxed iframes, local files).
+  - Validates `Origin` (or safe `Referer` fallback) against the configured CORS allowlist (`env.corsOrigins`).
+  - Malformed Referers are parsed safely in `try/catch` and rejected with HTTP 403 (never throwing unhandled HTTP 500 errors).
+
+### 11.5 Bounded Abuse Throttling (`loginThrottler.service.js`)
+- **Process-Local LRU Store:** Fixed capacity of 10,000 entries with a 15-minute TTL.
+- **Strict Eviction:** Automatically evicts the oldest entry upon reaching 10,000 items. Memory benchmarks verify heap growth stays below 25 MB even under 10,000 attacker records.
+- **Two-Tier Policy:**
+  1. **Per-IP Rate Limiting:** 5 failed login attempts per 15-minute window per IP. Exceeding triggers HTTP 429 (`Retry-After`). The legitimate owner on an independent IP is never locked out.
+  2. **Progressive Delays per (Email, IP):** Attempts 1-2 incur 0ms delay; Attempt 3 incurs 1,000ms delay; Attempts 4+ incur 2,000ms delay.
+
+### 11.6 Complete 11-Endpoint Protection Matrix
+
+| # | Endpoint | Method | Category | Proxy Secret Req? | Session Auth Req? | CSRF Header Req? | Cache-Control |
+| :-: | :--- | :--- | :--- | :-: | :-: | :-: | :--- |
+| 1 | `/api/health` | GET | Probe | No | No | No | `public` / default |
+| 2 | `/api/ready` | GET | Probe | No | No | No | `no-cache` |
+| 3 | `/api/auth/login` | POST | Auth | **Yes** | No | **Yes** | `private, no-store` |
+| 4 | `/api/auth/logout` | POST | Auth | **Yes** | No (Idempotent) | **Yes** | `private, no-store` |
+| 5 | `/api/auth/me` | GET | Auth | **Yes** | **Yes** | No (Safe GET) | `private, no-store` |
+| 6 | `/api/hotels` | GET | Inventory | **Yes** | **Yes** | No (Safe GET) | `private, no-store` |
+| 7 | `/api/hotels/stats` | GET | Analytics | **Yes** | **Yes** | No (Safe GET) | `private, no-store` |
+| 8 | `/api/hotels/:id` | GET | Inventory | **Yes** | **Yes** | No (Safe GET) | `private, no-store` |
+| 9 | `/api/hotels` | POST | Inventory | **Yes** | **Yes** | **Yes** | `private, no-store` |
+| 10 | `/api/hotels/:id` | PUT | Inventory | **Yes** | **Yes** | **Yes** | `private, no-store` |
+| 11 | `/api/hotels/:id` | DELETE | Inventory | **Yes** | **Yes** | **Yes** | `private, no-store` |

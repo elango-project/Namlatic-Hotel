@@ -23,6 +23,7 @@ describe('Unit Tests: Express Backend Hardening Configuration (Phase 5C)', () =>
         R2_BUCKET_NAME: 'hotel-bucket',
         R2_PUBLIC_BASE_URL: 'https://cdn.example.com',
         DATABASE_URL: 'postgresql://user:pass@ep-host.aws.neon.tech/neondb?sslmode=require&channel_binding=prefer',
+        BACKEND_PROXY_SECRET: 'test_proxy_secret_at_least_32_chars_long_12345',
       });
       assert.equal(config.port, 10000);
       assert.equal(config.host, '0.0.0.0');

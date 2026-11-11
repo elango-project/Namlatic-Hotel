@@ -215,7 +215,7 @@ npm test
 - [x] **Phase 5F-A2.1: Authentication Database & Password Infrastructure** (Incremental PostgreSQL migration `002_create_auth_tables.sql` establishing `users` singleton and `sessions` tables, transactional `migrate.js` runner, Argon2id password service with process-local bounded concurrency semaphore, strict Unicode code-point validation, one-time owner bootstrap CLI, and administrative password recovery CLI. 379 automated tests passing)
 - [x] **Phase 5F-A2.1.1: Authentication Infrastructure Safety Corrections** (Dedicated `TEST_DATABASE_URL` test isolation, runtime safety guards rejecting production and non-test databases, temporary test record ID tracking eliminating broad owner deletions, native TTY masked input tooling with raw mode and Unicode backspace support, pre-semaphore 128-byte limit enforcement in `verifyPassword`, incremental migration `003_correct_session_expiry_indexes.sql` creating separate B-tree indexes for `expires_at` and `idle_expires_at`, migration concurrency advisory locking with clean skip, constant-time dummy hash verification. 402 automated tests passing)
 - [x] **Phase 5F-A2.1.2: Dedicated Test Role and Database Safety** (Created dedicated non-superuser test role `namlatic_test` with least privileges on `namlatic_hotel_test` and zero permissions on development database `namlatic_hotel`, strengthened test database validation with exact expected test database name matching, explicit allowed-host enforcement rejecting unauthorized remote hosts while supporting custom CI hosts via `TEST_DB_ALLOWED_HOSTS`, strict rejection of application user `namlatic_app` and administrative superusers `postgres`/`root`/`admin`, replaced all unit test fixtures with fictional credentials. 414 automated tests passing)
-- [ ] **Phase 5F-A2.2: Backend Authentication Middleware & Route Lockdown** (Session token issuance/revocation, `__Host-` cookie management, tokenless CSRF middleware, timing-safe proxy-secret validation, and `/api/hotels/*` route protection)
+- [x] **Phase 5F-A2.2: Backend Authentication Middleware & Route Lockdown** (PostgreSQL-backed split-token sessions storing SHA-256 verifier hashes, `__Host-namlatic_session` HttpOnly cookie, timing-safe reverse proxy secret verification with zero-downtime rotation, tokenless CSRF defense with `X-Requested-With` and Fetch Metadata, bounded LRU abuse throttler with progressive delays and IP rate limiting, dummy Argon2 verification timing equalization, complete route protection locking down all hotel endpoints `GET /api/hotels`, `GET /api/hotels/stats`, `GET /api/hotels/:id`, `POST /api/hotels`, `PUT /api/hotels/:id`, `DELETE /api/hotels/:id`, narrow orchestrator health probe exemptions. 512 automated tests passing)
 - [ ] **Phase 5F-A2.3: Backend Security Verification** (Full backend integration tests, direct API isolation, error handling, regression audit)
 - [ ] **Phase 5F-A3: Frontend Authentication UI & Protected Routing** (Login page, Redux authSlice, ProtectedRoute, session bootstrap, logout control)
 - [ ] **Phase 5F-B: Cloud Resource Provisioning** (Neon PostgreSQL, Render Web Service, Cloudflare R2 bucket, Vercel proxy configuration)
@@ -225,13 +225,13 @@ npm test
 
 ## 8. Important Security Notice: Owner Authentication Status
 
-> [!WARNING]
-> **Owner Authentication Foundation Established (Route Lockdown in Progress - Phase 5F-A2.2):**
-> Phase 5F-A2.1 implemented the credential storage, database schema (`users` singleton and `sessions` tables), Argon2id hashing service, owner bootstrap CLI, and administrative password recovery CLI.
+> [!NOTE]
+> **Backend Route Protection & Owner Authentication Fully Implemented (Phase 5F-A2.2):**
+> Phase 5F-A2.2 locked down all hotel endpoints (`GET /api/hotels`, `GET /api/hotels/stats`, `GET /api/hotels/:id`, `POST /api/hotels`, `PUT /api/hotels/:id`, `DELETE /api/hotels/:id`) behind mandatory owner session authentication (`requireAuth`), tokenless CSRF verification (`verifyTokenlessCsrf`), and reverse proxy secret validation (`verifyProxySecret`).
 >
-> However, **the HTTP route protection layer is scheduled for Phase 5F-A2.2**. In this current subphase, write endpoints (`POST /api/hotels`, `PUT /api/hotels/:id`, `DELETE /api/hotels/:id`) are not yet intercepted by authentication middleware.
+> Probes (`GET /api/health` and `GET /api/ready`) remain unauthenticated and exempt from rate limiting to support platform orchestrators.
 >
-> The API must **not** be deployed publicly or exposed to unauthenticated internet traffic until Phase 5F-A2.2 (backend route protection) and Phase 5F-A3 (frontend auth & protected routes) are completed. Access control must be enforced strictly at the backend API layer.
+> Frontend UI authentication and client-side protected routing are scheduled for **Phase 5F-A3**. Access control is strictly enforced at the Express API layer.
 
 ---
 

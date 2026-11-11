@@ -439,6 +439,48 @@ function parseR2Config(rawEnv = process.env, nodeEnv = rawEnv.NODE_ENV || 'devel
 }
 
 /**
+ * Parses and validates internal proxy secrets used for Vercel-to-Render communication.
+ * In production, BACKEND_PROXY_SECRET is strictly required and must be at least 32 characters.
+ * In development, if unset, it defaults to null (or a secure test secret in test).
+ *
+ * @param {Record<string, string|undefined>} rawEnv
+ * @param {string} nodeEnv
+ * @returns {{ backendProxySecret: string|null, backendProxySecretOld: string|null }}
+ */
+function parseProxySecrets(rawEnv = process.env, nodeEnv = 'development') {
+  const isProduction = nodeEnv === 'production';
+  const isTest = nodeEnv === 'test';
+
+  let rawSecret = rawEnv.BACKEND_PROXY_SECRET ? rawEnv.BACKEND_PROXY_SECRET.trim() : null;
+  const rawSecretOld = rawEnv.BACKEND_PROXY_SECRET_OLD ? rawEnv.BACKEND_PROXY_SECRET_OLD.trim() : null;
+
+  if (isProduction) {
+    if (!rawSecret) {
+      throw new Error('In production, BACKEND_PROXY_SECRET environment variable is required.');
+    }
+    if (rawSecret.length < 32) {
+      throw new Error('In production, BACKEND_PROXY_SECRET must be at least 32 characters long.');
+    }
+  } else if (rawSecret && rawSecret.length < 32) {
+    throw new Error('BACKEND_PROXY_SECRET must be at least 32 characters long.');
+  }
+
+  if (rawSecretOld && rawSecretOld.length < 32) {
+    throw new Error('BACKEND_PROXY_SECRET_OLD must be at least 32 characters long.');
+  }
+
+  // In test environment, provide a secure fallback secret if not explicitly configured
+  if (isTest && !rawSecret) {
+    rawSecret = 'test_proxy_secret_at_least_32_chars_long_12345';
+  }
+
+  return {
+    backendProxySecret: rawSecret || null,
+    backendProxySecretOld: rawSecretOld || null,
+  };
+}
+
+/**
  * Parses and validates the complete environment configuration.
  *
  * @param {Record<string, string|undefined>} rawEnv - Environment variables map (defaults to process.env)
@@ -458,6 +500,7 @@ function parseAndValidateEnv(rawEnv = process.env) {
 
   const mediaStorageDriver = parseMediaStorageDriver(rawEnv, nodeEnv);
   const r2Config = mediaStorageDriver === 'r2' ? parseR2Config(rawEnv, nodeEnv) : null;
+  const proxySecrets = parseProxySecrets(rawEnv, nodeEnv);
 
   return {
     port,
@@ -470,6 +513,8 @@ function parseAndValidateEnv(rawEnv = process.env) {
     bodyLimit,
     mediaStorageDriver,
     r2Config,
+    backendProxySecret: proxySecrets.backendProxySecret,
+    backendProxySecretOld: proxySecrets.backendProxySecretOld,
     ...dbConfig,
     parseDatabaseUrl,
     validateDatabaseConfig,
@@ -478,6 +523,7 @@ function parseAndValidateEnv(rawEnv = process.env) {
     parseRateLimitConfig,
     parseMediaStorageDriver,
     parseR2Config,
+    parseProxySecrets,
     parseAndValidateEnv,
   };
 }

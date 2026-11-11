@@ -12,8 +12,8 @@
     "db:migrate": "node src/database/migrate.js",
     "db:bootstrap": "node src/scripts/bootstrap-owner.js",
     "db:reset-password": "node src/scripts/reset-owner-password.js",
-    "test:unit": "node --test tests/unit/database.config.test.js tests/unit/hardening.config.test.js tests/unit/hotel.validator.test.js tests/unit/password.service.test.js tests/unit/security.test.js tests/unit/stats.test.js tests/unit/storage.test.js tests/unit/terminalPrompt.test.js tests/unit/testDb.config.test.js",
-    "test:integration": "node --test tests/integration/auth.database.test.js && node tests/integration/hotel.api.test.js",
+    "test:unit": "node --test tests/unit/auth.middleware.test.js tests/unit/cookieHelper.test.js tests/unit/csrf.middleware.test.js tests/unit/database.config.test.js tests/unit/hardening.config.test.js tests/unit/hotel.validator.test.js tests/unit/loginThrottler.test.js tests/unit/password.service.test.js tests/unit/proxySecret.middleware.test.js tests/unit/security.test.js tests/unit/session.service.test.js tests/unit/stats.test.js tests/unit/storage.test.js tests/unit/terminalPrompt.test.js tests/unit/testDb.config.test.js",
+    "test:integration": "node --test tests/integration/auth.database.test.js && node --test tests/integration/auth.api.test.js && node tests/integration/hotel.api.test.js",
     "test": "npm run test:unit && npm run test:integration"
   },
   "dependencies": {

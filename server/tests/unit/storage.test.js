@@ -83,6 +83,7 @@ describe('Unit Tests: Cloudflare R2 & Media Storage Abstraction (Phase 5D)', () 
         R2_BUCKET_NAME: 'namlatic-hotel-media',
         R2_PUBLIC_BASE_URL: 'https://cdn.namlatic.com',
         DATABASE_URL: 'postgresql://user:pass@ep-host.aws.neon.tech/neondb?sslmode=require&channel_binding=prefer',
+        BACKEND_PROXY_SECRET: 'test_proxy_secret_at_least_32_chars_long_12345',
       });
 
       assert.equal(config.mediaStorageDriver, 'r2');
