@@ -166,6 +166,41 @@ export const getImageUrl = (imagePath, origin = API_ORIGIN, env = import.meta.en
   return `${cleanOrigin}${cleanPath}`;
 };
 
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
+
+let unauthorizedListeners = [];
+
+/**
+ * Registers a listener to be notified when an authenticated API call encounters an HTTP 401.
+ * Excludes /auth/login (credential error) and /auth/me (initial probe).
+ *
+ * @param {Function} listener
+ * @returns {Function} Unsubscribe function
+ */
+export function onUnauthorized(listener) {
+  if (typeof listener === 'function') {
+    unauthorizedListeners.push(listener);
+  }
+  return () => {
+    unauthorizedListeners = unauthorizedListeners.filter((l) => l !== listener);
+  };
+}
+
+/**
+ * Notifies all registered unauthorized listeners.
+ *
+ * @param {{ endpoint: string, status: number, error: Error }} details
+ */
+export function notifyUnauthorized(details) {
+  unauthorizedListeners.forEach((listener) => {
+    try {
+      listener(details);
+    } catch (_err) {
+      // Ignore listener error
+    }
+  });
+}
+
 /**
  * Performs an HTTP request with error handling and query string serialization.
  *
@@ -191,20 +226,38 @@ async function request(endpoint, options = {}) {
     }
   }
 
+  const method = (options.method || 'GET').toUpperCase();
+
   const headers = {
     'Accept': 'application/json',
     ...options.headers,
   };
 
-  // Only attach JSON content-type if body is not FormData
-  if (options.body && !(options.body instanceof FormData)) {
+  // Attach X-Requested-With header for tokenless CSRF verification on mutating requests
+  if (MUTATING_METHODS.has(method) && !headers['X-Requested-With']) {
+    headers['X-Requested-With'] = 'XMLHttpRequest';
+  }
+
+  let body = options.body;
+  // Automatically stringify plain object bodies to JSON
+  if (body && !(body instanceof FormData) && typeof body === 'object') {
+    body = JSON.stringify(body);
+  }
+
+  // Only attach JSON content-type if body is present and not FormData
+  if (body && !(body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
 
-  const response = await fetch(url, {
+  const fetchOptions = {
+    credentials: options.credentials || 'include',
     ...options,
+    method,
     headers,
-  });
+    body,
+  };
+
+  const response = await fetch(url, fetchOptions);
 
   const data = await response.json().catch(() => null);
 
@@ -212,13 +265,55 @@ async function request(endpoint, options = {}) {
     const message = data?.message || data?.errors?.[0] || `Request failed with status ${response.status}`;
     const error = new Error(message);
     error.status = response.status;
+    error.statusCode = response.status;
     error.data = data;
     error.errors = data?.errors || [];
+    error.retryAfter = response.headers?.get ? response.headers.get('Retry-After') : null;
+
+    // Notify unauthorized subscribers if a protected endpoint encounters an expired session (HTTP 401)
+    if (response.status === 401 && endpoint !== '/auth/login' && endpoint !== '/auth/me') {
+      notifyUnauthorized({ endpoint, status: response.status, error });
+    }
+
     throw error;
   }
 
   return data;
 }
+
+export const authApi = {
+  /**
+   * Authenticates the hotel owner.
+   * @param {{ email: string, password: string }} credentials
+   * @param {AbortSignal} [signal]
+   */
+  login: (credentials, signal = undefined) =>
+    request('/auth/login', {
+      method: 'POST',
+      body: credentials,
+      signal,
+    }),
+
+  /**
+   * Revokes the current session and clears the session cookie.
+   * @param {AbortSignal} [signal]
+   */
+  logout: (signal = undefined) =>
+    request('/auth/logout', {
+      method: 'POST',
+      signal,
+    }),
+
+  /**
+   * Retrieves the currently authenticated owner profile.
+   * @param {AbortSignal} [signal]
+   */
+  getMe: (signal = undefined) =>
+    request('/auth/me', {
+      method: 'GET',
+      signal,
+    }),
+};
 
 export const hotelApi = {
   /**

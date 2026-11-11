@@ -175,7 +175,7 @@ Communicates over HTTP to an isolated Express test instance on port 5001 connect
 
 Built using **Vitest** + **React Testing Library** + **@testing-library/jest-dom** with `jsdom`:
 
-### Test Suites Breakdown (98 tests):
+### Test Suites Breakdown (186 tests):
 1. **`HotelCard.test.jsx` (4 tests):**
    - Renders hotel title, formatted price (currency-neutral `250.00` by default, or `$250.00` when configured), coordinates (`24.4539°, 54.3773°`), and description snippet.
    - Renders accessible fallback SVG badge ("No Image Available") when `image_path` is null.
@@ -223,7 +223,7 @@ Built using **Vitest** + **React Testing Library** + **@testing-library/jest-dom
    - Dynamic accessible name (`aria-label`) aligned with visible state.
    - Input file resetting on invalid selection.
    - React StrictMode mount/unmount resilience.
-7. **`HotelFormPage.test.jsx` (7 tests):**
+7. **`HotelFormPage.test.jsx` (8 tests):**
    - Route parsing for `/hotels/new` (create mode) and `/hotels/:id/edit` (edit mode).
    - Non-numeric ID parameter validation.
    - Rejection of route ID exceeding PostgreSQL BIGINT maximum (`9223372036854775808`).
@@ -313,6 +313,49 @@ Built using **Vitest** + **React Testing Library** + **@testing-library/jest-dom
    - Legacy relative media resolution: Verifies `getImageUrl('/uploads/hotels/photo.jpg')` resolves against origin without appending `/api`.
    - Path without leading slash: Correctly prepends leading slash for relative media paths.
    - Null handling: Safely returns `null` for null, undefined, empty, or whitespace image paths.
+12. **`authSlice.test.js` (20 tests - Phase 5F-A3):**
+   - Initial state: Verifies default unauthenticated state (`user: null`, `isAuthenticated: false`, `isInitialized: false`, `isLoading: false`, `loginError: null`, `sessionExpired: false`).
+   - `clearAuthError`: Safely clears `loginError` and resets `sessionExpired: false`.
+   - `sessionExpired`: Sets `sessionExpired: true`, `isAuthenticated: false`, and clears active user session.
+   - `resetAuth`: Completely clears authentication state back to initial state.
+   - `loginUser.pending`: Activates `isLoading: true` and clears previous errors.
+   - `loginUser.fulfilled`: Populates `state.user`, sets `isAuthenticated: true`, and resets loading state.
+   - `loginUser.rejected`: Sets `loginError` message and clears loading state.
+   - `fetchCurrentUser.pending`: Sets `isCheckingAuth: true`.
+   - `fetchCurrentUser.fulfilled`: Sets `state.user`, `isAuthenticated: true`, and marks `isInitialized: true`.
+   - `fetchCurrentUser.rejected`: Resets user, marks `isInitialized: true`, and segregates background connection errors from `loginError`.
+   - `logoutUser.fulfilled`: Clears authenticated user, sets `isAuthenticated: false`, and resets initialization state.
+   - Selectors: Validates `selectAuth`, `selectCurrentUser`, `selectIsAuthenticated`, `selectAuthLoading`, `selectAuthInitialized`, `selectLoginError`, `selectSessionExpired`, `selectConnectionError`.
+13. **`apiAuth.test.js` (9 tests - Phase 5F-A3):**
+   - Credentials inclusion: Verifies all fetch requests unconditionally include `credentials: 'include'` for HttpOnly cookies.
+   - Tokenless CSRF header: Asserts state-changing methods (`POST`, `PUT`, `DELETE`, `PATCH`) automatically attach `X-Requested-With: XMLHttpRequest`.
+   - Safe GET requests: Verifies idempotent `GET` requests omit `X-Requested-With` header.
+   - Object payload serialization: Confirms plain JS objects passed as body are automatically `JSON.stringify`'d and receive `Content-Type: application/json`.
+   - FormData pass-through: Confirms `FormData` payloads are passed unmodified without overriding browser `multipart/form-data` boundary.
+   - 401 unauthorized subscriber: Verifies `onUnauthorized` callbacks fire on 401 response from protected endpoints (`/hotels`).
+   - Login 401 suppression: Asserts 401 response from `POST /api/auth/login` does NOT trigger unauthorized/session-expired callback.
+   - Me 401 suppression: Asserts 401 response from initial startup `GET /api/auth/me` does NOT trigger session-expired callback.
+   - Direct Auth API wrappers: Verifies `authApi.login()`, `authApi.logout()`, and `authApi.getMe()` invoke the correct endpoints and HTTP verbs.
+14. **`LoginPage.test.jsx` (12 tests - Phase 5F-A3):**
+   - UI layout & branding: Renders Namlatic Hotel branding, "Welcome Back" greeting, form controls, labels, and security footer.
+   - Email format validation: Flags empty email and invalid format (`invalid-email`) with accessible error message.
+   - Password requirement validation: Flags empty password field with field validation message.
+   - Password mask toggle: Toggles password input type between `password` and `text` with updated `aria-label` and `aria-pressed`.
+   - Password preservation: Ensures password field does NOT trim whitespace or alter Unicode characters.
+   - Submission handling: Dispatches `loginUser` thunk with trimmed email and intact password on valid form submission.
+   - Loading indicator: Disables inputs and renders loading spinner on submit button during active authentication request.
+   - Server error alert: Displays accessible server error banner when `loginError` is present in Redux state.
+   - Session expired alert: Displays warning notice banner when `sessionExpired: true` in Redux state.
+   - Error clear on typing: Clears visible error messages when owner resumes typing into email or password fields.
+   - Pre-authenticated redirect: Redirects authenticated owner directly to `/hotels` or previous location if already logged in.
+   - Post-login navigation: Navigates to targeted protected route (`from` location state) upon successful authentication.
+15. **`ProtectedRoute.test.jsx` (6 tests - Phase 5F-A3):**
+   - Initial loading state: Displays centered loading spinner while `isInitialized` is `false` during startup auth verification.
+   - Recoverable connection error: Displays offline warning screen with "Try Reconnecting" button when startup auth verification fails due to network outage.
+   - Unauthenticated redirect: Redirects unauthenticated visitor to `/login` while preserving attempted URL in `location.state.from`.
+   - Authenticated child rendering: Successfully renders protected child components and nested routes when `isAuthenticated` is `true`.
+   - Route state transition: Seamlessly transitions from loading state to protected content once auth verification resolves successfully without content flicker.
+   - Session expiration redirection: Renders redirect to `/login` when session expires while user is actively on a protected route.
 
 ---
 
@@ -331,7 +374,7 @@ npm run test:unit
 npm run test:integration
 ```
 
-### Frontend Tests (139 tests):
+### Frontend Tests (186 tests):
 From the `client` directory:
 ```powershell
 # Run all frontend unit tests with Vitest
@@ -344,8 +387,8 @@ npm run test:watch
 ### Total Test Suite Count:
 - **Backend Unit Tests:** 272 passed (15 test suites)
 - **Backend Integration Tests:** 156 passed (63 hotel API + 18 auth/migrations + 75 auth API)
-- **Frontend Unit Tests:** 139 passed (11 test suites)
-- **Total Automated Tests:** **567 / 567 passed (100% pass rate)**
+- **Frontend Unit Tests:** 186 passed (15 test suites)
+- **Total Automated Tests:** **614 / 614 passed (100% pass rate)**
 
 ---
 

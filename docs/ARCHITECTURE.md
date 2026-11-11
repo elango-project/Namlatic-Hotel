@@ -950,3 +950,81 @@ WHERE rolname = current_user;
 This guarantees that the connected test database user (`namlatic_test`) has `rolsuper=false`, `rolcreatedb=false`, and `rolcreaterole=false` before any test runs.
 
 *For full audit logs, attack scenarios, and remediation details, see the [Phase 5F-A2.3 Backend Security Audit Report](security/PHASE_5F_A2_3_BACKEND_SECURITY_AUDIT.md).*
+
+---
+
+## 13. Frontend Owner Authentication UI, Redux State & Protected Routes (Phase 5F-A3)
+
+Phase 5F-A3 implements the complete frontend authentication layer, integrating the React SPA with the backend session architecture.
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        Client (React SPA)                              │
+│                                                                        │
+│  [ Application Startup ] ──> dispatch(fetchCurrentUser())              │
+│                                      │                                 │
+│                                      ▼                                 │
+│                         [ GET /api/auth/me ]                           │
+│                                      │                                 │
+│                   ┌──────────────────┴──────────────────┐              │
+│                   ▼                                     ▼              │
+│         [ Active Session (200) ]              [ No Session (401) ]     │
+│         isAuthenticated: true                 isAuthenticated: false   │
+│         user: { id, email, role }             user: null               │
+│                   │                                     │              │
+│                   ▼                                     ▼              │
+│         Render Protected Routes               Redirect to /login       │
+│         (Dashboard, Hotels, Forms)            (Preserve state.from)    │
+└──────────────────────────────────────┬─────────────────────────────────┘
+                                       │
+                                       ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                 Protected Route & Session Management                   │
+│                                                                        │
+│  1. ProtectedRoute: Guards all owner routes; waits for initialized     │
+│  2. Tokenless CSRF: Emits 'X-Requested-With: XMLHttpRequest' on writes │
+│  3. Session Expiration: onUnauthorized listener catches 401s on hotel  │
+│     requests, dispatches sessionExpired(), and routes to /login        │
+│  4. Owner Logout: Calls POST /api/auth/logout, resets Redux auth       │
+│     slice, clears cookie on backend, and replaces history to /login    │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### 13.1 Redux Toolkit Authentication State (`authSlice.js`)
+State Shape:
+```javascript
+{
+  user: null,               // { id, email, role }
+  status: 'idle',           // 'idle' | 'loading' | 'succeeded' | 'failed'
+  isAuthenticated: false,   // boolean
+  error: null,              // error string | null
+  initialized: false,       // true once initial fetchCurrentUser() finishes
+  sessionExpired: false,    // true if session was revoked/expired during usage
+  connectionError: false    // true if server/network outage prevented verification
+}
+```
+Async Thunks:
+1. `fetchCurrentUser()`: Dispatched on mount in `App.jsx`. Calls `GET /api/auth/me`. If 200, restores session. If 401, sets `isAuthenticated: false` and `status: 'idle'`. If network error, records `connectionError: true`. Duplicate requests in flight are prevented via `condition`.
+2. `loginUser({ email, password })`: Dispatched on login form submission. Sends credentials to `POST /api/auth/login`. On success, stores safe user profile. On failure, captures error messages (including 429 rate limit delays).
+3. `logoutUser()`: Dispatched from header/sidebar logout buttons. Calls `POST /api/auth/logout`, resets auth slice, and clears user state.
+
+### 13.2 Protected Route Architecture (`ProtectedRoute.jsx`)
+- Prevents flash of private content by displaying an accessible Namlatic loading spinner while `!initialized`.
+- If a server outage occurs on startup, displays an "Authentication Service Unavailable" screen with a retry button.
+- If `initialized && !isAuthenticated`, redirects to `/login` with `state: { from: location }`.
+- If `initialized && isAuthenticated`, renders child components or `<Outlet />`.
+
+### 13.3 Login Screen (`LoginPage.jsx`)
+- Responsive design system tokens matching Namlatic brand identity (`--color-primary`, `--color-orange`, `--color-surface`).
+- Accessible `<label>` associations, `aria-invalid`, `aria-describedby`, and aria-live status regions.
+- Email input with whitespace trimming on submit.
+- Password input with strict preservation of candidate characters (no trimming or Unicode normalization).
+- Accessible Show/Hide password toggle button with SVG icons and `aria-pressed`.
+- Generic error messages for 401 responses to prevent account enumeration.
+- Submission throttling to prevent duplicate concurrent API requests.
+- Automatic redirection to `from` destination upon successful authentication.
+
+### 13.4 Session Expiration & Tokenless CSRF Handling (`api.js`)
+- `request()` automatically attaches `'X-Requested-With': 'XMLHttpRequest'` on mutating methods (`POST`, `PUT`, `DELETE`, `PATCH`).
+- Defaults to `credentials: 'include'` on all API calls.
+- Emits `onUnauthorized` callbacks for 401 responses on protected endpoints, while strictly excluding `/auth/login` and `/auth/me` to avoid false session expiration alerts or redirect loops.

@@ -1,13 +1,30 @@
 import React, { useState, useEffect } from 'react';
-import { Outlet, NavLink, useLocation } from 'react-router-dom';
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { checkBackendReadiness } from '../features/hotels/hotelsSlice';
+import { logoutUser, selectCurrentUser } from '../store/authSlice';
 
 function MainLayout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
   const dispatch = useDispatch();
-  const backendOnline = useSelector((state) => state.hotels.backendOnline);
+  const backendOnline = useSelector((state) => state.hotels?.backendOnline);
+  const user = useSelector(selectCurrentUser);
+
+  const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await dispatch(logoutUser()).unwrap();
+      navigate('/login', { replace: true });
+    } catch (_err) {
+      navigate('/login', { replace: true });
+    } finally {
+      setLoggingOut(false);
+    }
+  };
 
   // Close mobile drawer when route changes
   useEffect(() => {
@@ -136,12 +153,30 @@ function MainLayout() {
             </span>
           </div>
           <div className="owner-profile-card">
-            <div className="owner-avatar">PO</div>
+            <div className="owner-avatar">
+              {user?.email ? user.email.slice(0, 2).toUpperCase() : 'PO'}
+            </div>
             <div className="owner-info">
-              <div className="owner-name">Property Owner</div>
-              <div className="owner-role">Namlatic Admin</div>
+              <div className="owner-name" title={user?.email || 'Property Owner'}>
+                {user?.email || 'Property Owner'}
+              </div>
+              <div className="owner-role">
+                Namlatic {user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : 'Owner'}
+              </div>
             </div>
           </div>
+          <button
+            type="button"
+            className="owner-logout-btn"
+            onClick={handleLogout}
+            disabled={loggingOut}
+            aria-label="Log out of owner account"
+          >
+            <svg className="logout-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+            <span>{loggingOut ? 'Signing out...' : 'Sign Out'}</span>
+          </button>
         </div>
       </aside>
 
@@ -167,6 +202,18 @@ function MainLayout() {
             <NavLink to="/hotels" className="btn btn-outline btn-sm header-action-btn">
               Browse Inventory
             </NavLink>
+            <button
+              type="button"
+              className="btn btn-outline btn-sm header-logout-btn"
+              onClick={handleLogout}
+              disabled={loggingOut}
+              aria-label="Sign out of owner portal"
+            >
+              <svg className="logout-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              <span>{loggingOut ? 'Signing out...' : 'Sign Out'}</span>
+            </button>
             <div className="header-profile-badge">
               <span className="badge-pill">Owner View</span>
             </div>

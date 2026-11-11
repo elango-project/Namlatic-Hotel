@@ -152,10 +152,10 @@ namlatic-hotel-portal/
 
 ## 5. Running Automated Tests
 
-The test suite includes **567 automated tests** across the entire full-stack architecture:
+The test suite includes **614 automated tests** across the entire full-stack architecture:
 - **Backend Unit Tests:** 272 passed (`node:test`, 15 test suites)
 - **Backend Integration Tests:** 156 passed (HTTP + Live PostgreSQL 18.6: 18 auth database tests + 75 auth API tests + 63 hotel API tests)
-- **Frontend Unit Tests:** 139 passed (Vitest + React Testing Library, 11 test suites)
+- **Frontend Unit Tests:** 186 passed (Vitest + React Testing Library, 15 test suites)
 
 ```powershell
 # 1. Run all backend tests (server directory)
@@ -217,7 +217,7 @@ npm test
 - [x] **Phase 5F-A2.1.2: Dedicated Test Role and Database Safety** (Created dedicated non-superuser test role `namlatic_test` with least privileges on `namlatic_hotel_test` and zero permissions on development database `namlatic_hotel`, strengthened test database validation with exact expected test database name matching, explicit allowed-host enforcement rejecting unauthorized remote hosts while supporting custom CI hosts via `TEST_DB_ALLOWED_HOSTS`, strict rejection of application user `namlatic_app` and administrative superusers `postgres`/`root`/`admin`, replaced all unit test fixtures with fictional credentials. 414 automated tests passing)
 - [x] **Phase 5F-A2.2: Backend Authentication Middleware & Route Lockdown** (PostgreSQL-backed split-token sessions storing SHA-256 verifier hashes, `__Host-namlatic_session` HttpOnly cookie, timing-safe reverse proxy secret verification with zero-downtime rotation, tokenless CSRF defense with `X-Requested-With` and Fetch Metadata, bounded LRU abuse throttler with progressive delays and IP rate limiting, dummy Argon2 verification timing equalization, complete route protection locking down all hotel endpoints `GET /api/hotels`, `GET /api/hotels/stats`, `GET /api/hotels/:id`, `POST /api/hotels`, `PUT /api/hotels/:id`, `DELETE /api/hotels/:id`, narrow orchestrator health probe exemptions. 512 automated tests passing)
 - [x] **Phase 5F-A2.3: Backend Security Audit, Authentication Hardening & Final Verification** (Systematic security audit across all authentication, session management, and route protection modules; strict RFC 6265bis `__Host-` cookie enforcement with safe dev plain-HTTP fallback; health probe method bypass restriction limiting exemptions strictly to GET/HEAD; fetch metadata lowercase normalization and strict site allowlisting; throttled sliding idle refresh race condition mitigation; runtime PostgreSQL catalog verification of dedicated test role least privileges; comprehensive 6x6 hotel route protection matrix; 567 automated tests passing)
-- [ ] **Phase 5F-A3: Frontend Authentication UI & Protected Routing** (Login page, Redux authSlice, ProtectedRoute, session bootstrap, logout control)
+- [x] **Phase 5F-A3: Frontend Authentication UI & Protected Routing** (Owner login page with Argon2id credentials, Redux Toolkit authSlice, persistent HttpOnly session restoration via `GET /api/auth/me`, `ProtectedRoute` route protection wrapper preventing flash of private content, session expiration interceptor with unauthorized event subscription, accessible show/hide password toggle, header and sidebar logout controls with loading feedback, responsive design verified across 8 viewports, 614 automated tests passing)
 - [ ] **Phase 5F-B: Cloud Resource Provisioning** (Neon PostgreSQL, Render Web Service, Cloudflare R2 bucket, Vercel proxy configuration)
 - [ ] **Phase 5G: Production End-to-End & Security Verification** (Live cloud verification, CORS validation, SSL audit, probe monitoring)
 
@@ -226,12 +226,12 @@ npm test
 ## 8. Important Security Notice: Owner Authentication Status
 
 > [!NOTE]
-> **Backend Route Protection & Security Hardening Complete (Phase 5F-A2.3):**
-> Phase 5F-A2.3 audited and verified that all hotel endpoints (`GET /api/hotels`, `GET /api/hotels/stats`, `GET /api/hotels/:id`, `POST /api/hotels`, `PUT /api/hotels/:id`, `DELETE /api/hotels/:id`) are locked down behind mandatory owner session authentication (`requireAuth`), tokenless CSRF verification (`verifyTokenlessCsrf`), and reverse proxy secret validation (`verifyProxySecret`).
+> **Owner Authentication & Protected Routing Fully Implemented (Phases 5F-A2.2, 5F-A2.3 & 5F-A3):**
+> All hotel inventory and analytics endpoints (`GET /api/hotels`, `GET /api/hotels/stats`, `GET /api/hotels/:id`, `POST /api/hotels`, `PUT /api/hotels/:id`, `DELETE /api/hotels/:id`) are strictly locked down behind mandatory owner session authentication (`requireAuth`), tokenless CSRF verification (`verifyTokenlessCsrf`), and reverse proxy secret validation (`verifyProxySecret`).
 >
-> Health probes (`GET /api/health` and `GET /api/ready`) are strictly restricted to GET and HEAD methods and remain unauthenticated and unthrottled for orchestrators. Arbitrary methods (`POST /api/health`, `DELETE /api/ready`) are rejected with HTTP 403.
+> On the frontend, `ProtectedRoute` guards all owner routes (`/`, `/dashboard`, `/hotels`, `/hotels/new`, `/hotels/:id`, `/hotels/:id/edit`), restoring sessions automatically from the HttpOnly session cookie on startup without exposing credentials to JavaScript. Unauthenticated users are redirected to the responsive `/login` screen.
 >
-> Frontend UI authentication and client-side protected routing are scheduled for **Phase 5F-A3**. Access control is strictly enforced at the Express API layer.
+> Probes (`GET /api/health` and `GET /api/ready`) remain unauthenticated and unthrottled for platform orchestrators. Single-owner portal architecture is fully operational and verified across 614 automated tests.
 
 ---
 
