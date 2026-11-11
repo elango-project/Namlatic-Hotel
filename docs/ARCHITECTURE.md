@@ -811,14 +811,18 @@ To guard against race conditions and lock contention in automated deployment pip
 - **Clean Skipping:** If another deployment or runner holds the lock (`pg_try_advisory_lock` returns `false`), the runner logs an informational notice and exits cleanly (`{ applied: [], skipped: [], locked: true }`) without throwing or executing duplicate migrations.
 - **Guaranteed Lock Release:** The advisory lock is unlocked within a `finally` block on the pinned client, ensuring release even if a migration script throws an exception.
 
-### 10.8 Dedicated Test Database Isolation & Safety Safeguards (Phase 5F-A2.1.1)
-To eliminate data destruction risks discovered during the Phase 5F-A2.1 review, integration tests require a dedicated, isolated test database (`namlatic_hotel_test`):
+### 10.8 Dedicated Test Database Isolation & Safety Safeguards (Phase 5F-A2.1.1 & Phase 5F-A2.1.2)
+To eliminate data destruction risks and enforce least-privilege database safety, integration tests require an isolated test database (`namlatic_hotel_test`) accessed strictly via a dedicated non-superuser role (`namlatic_test`):
 - **Mandatory `TEST_DATABASE_URL`:** Integration test runs fail immediately if `TEST_DATABASE_URL` is omitted. Tests never fall back to the development `DATABASE_URL`.
+- **Dedicated Non-Superuser Role (`namlatic_test`):** Integration tests run under a restricted non-superuser role possessing `NOSUPERUSER`, `NOCREATEDB`, and `NOCREATEROLE`. The role holds zero privileges on the primary development database (`namlatic_hotel`), preventing accidental modification.
 - **Runtime Safety Enforcements (`testDb.js`):**
   1. Rejects execution when `NODE_ENV === 'production'`.
   2. Rejects protected databases (`namlatic_hotel`, `postgres`, `production`, `neondb`).
-  3. Enforces that the database name must contain the substring `'test'`.
-  4. Sanitized logging outputs only the database name, never connection strings or credentials.
+  3. Enforces that the database name must contain `'test'` and exactly match the designated test database (`namlatic_hotel_test` or `TEST_DB_NAME`).
+  4. Enforces authorized host validation (defaulting to local loopback hosts `localhost`, `127.0.0.1`, `::1`, or explicitly configured `TEST_DB_ALLOWED_HOSTS`), preventing accidental runs against unauthorized remote databases.
+  5. Strictly rejects the application database user (`namlatic_app` / `DB_USER`) and administrative superusers (`postgres`, `root`, `admin`).
+  6. Enforces that the configured role matches the designated test role (`namlatic_test` or `TEST_DB_USER`).
+  7. Sanitized logging outputs only the database name, host, and test role, never connection strings or credentials.
 - **Non-Destructive Test Cleanup:** Broad deletion queries (such as `DELETE FROM users WHERE role = 'owner'`) are strictly eliminated. Instead, the test suite tracks all created test user IDs in memory (`createdUserIds`) and deletes only those temporary test records (`WHERE id = ANY($1::bigint[])`), completely eliminating the risk of erasing legitimate owner records.
 
 ### 10.9 Status & Scope Boundaries

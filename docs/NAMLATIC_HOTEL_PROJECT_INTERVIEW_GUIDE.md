@@ -4,9 +4,9 @@
 > **Repository:** [https://github.com/elango-project/Namlatic-Hotel](https://github.com/elango-project/Namlatic-Hotel)
 > **Runtime Environment:** Node.js 22+ (v24 LTS Recommended) • React 18.3.1 • Express 4.21.1 • PostgreSQL 18.6
 > **Current Verified Git Head:** `154dd46e9ee0b9ef1782c9679d61980d26dc9aad`
-> **Current Implementation Phase:** Phase 5F-A2.1.1 (Authentication Infrastructure Safety Corrections)
-> **Automated Test Suite Status:** **402 / 402 Automated Tests Passing (100% Pass Rate)**
-> *(183 Backend Unit + 80 Backend Integration + 139 Frontend Unit)*
+> **Current Implementation Phase:** Phase 5F-A2.1.2 (Dedicated Test Role and Database Safety)
+> **Automated Test Suite Status:** **414 / 414 Automated Tests Passing (100% Pass Rate)**
+> *(195 Backend Unit + 80 Backend Integration + 139 Frontend Unit)*
 
 ---
 
@@ -1665,6 +1665,7 @@ In technical interviews, clearly articulate the **exact current state** of the a
 | **Phase 5F-A1** | Architecture Assessment & Security Specification. | **Approved Architecture** (Vercel same-origin proxy, Argon2id, PostgreSQL sessions). |
 | **Phase 5F-A2.1** | Database Schema (`users`, `sessions`) & Argon2id Password Infrastructure. | **Implemented & Tested** (Unit tests passing, DB migrations applied). |
 | **Phase 5F-A2.1.1** | Safety & Isolation Patch for PostgreSQL Integration Tests. | **Implemented & Verified** (Dedicated `namlatic_hotel_test` DB, tracked user IDs). |
+| **Phase 5F-A2.1.2** | Dedicated Non-Superuser Test Role & Database Host Safety. | **Implemented & Verified** (Restricted `namlatic_test` role, exact DB name matching, allowed-hosts guard, fictional credentials). |
 | **Phase 5F-A2.2** | Route Guards, Session Middleware, Login/Logout Endpoints & Lock-Down. | **Pending Implementation** (Hotel CRUD endpoints currently public on local server). |
 | **Phase 5F-B** | Frontend Owner Login UI & Redux Session State. | **Planned Roadmap**. |
 
@@ -1980,8 +1981,8 @@ A reliable software engineering project guarantees correctness through automated
                                     |
                +--------------------+--------------------+
                |                Unit Tests               |
-               |            (322 Tests Passing)          |
-               | - 183 Backend Unit Tests (node:test)    |
+               |            (334 Tests Passing)          |
+               | - 195 Backend Unit Tests (node:test)    |
                | - 139 Frontend Unit Tests (Vitest + RTL)|
                +-----------------------------------------+
 ```
@@ -1989,17 +1990,17 @@ A reliable software engineering project guarantees correctness through automated
 ---
 
 ### 23.1 Test Suite Breakdown & Verification Metrics
-The repository currently maintains **402 passing automated tests**:
+The repository currently maintains **414 passing automated tests**:
 
 ```
 +---------------------------------------------------------------------------------+
 | Test Classification      | Framework / Runner           | Passing Test Count   |
 +--------------------------+------------------------------+----------------------+
-| Backend Unit Tests       | Node.js Native (node:test)   | 183 Passing          |
+| Backend Unit Tests       | Node.js Native (node:test)   | 195 Passing          |
 | Backend Integration Tests| Dedicated namlatic_hotel_test|  80 Passing          |
 | Frontend Unit Tests      | Vitest + RTL                 | 139 Passing          |
 +--------------------------+------------------------------+----------------------+
-| TOTAL PASSING TESTS      | Complete Project Test Suite  | 402 PASSING (100%)   |
+| TOTAL PASSING TESTS      | Complete Project Test Suite  | 414 PASSING (100%)   |
 +--------------------------+------------------------------+----------------------+
 ```
 
@@ -2057,6 +2058,13 @@ If a developer or CI pipeline ran tests against a staging or production database
    });
    ```
    This guarantees that even if run against a shared database, tests delete **only their own temporary fixtures**, preserving all existing user records.
+
+#### The Phase 5F-A2.1.2 Least-Privilege Role & Host Safety Strengthening:
+To prevent tests from running under privileged application credentials:
+1. **Dedicated Non-Superuser Test Role (`namlatic_test`):** Integration tests are restricted to a dedicated role with `NOSUPERUSER NOCREATEDB NOCREATEROLE`. The role holds zero privileges on the development database `namlatic_hotel`, with connection explicitly revoked.
+2. **Exact Test Database Name Enforcement:** `testDb.js` strictly enforces that the database name matches `namlatic_hotel_test` (or `TEST_DB_NAME`), rejecting other databases even if their name contains `test`.
+3. **Explicit Allowed-Host Guard:** Enforces that tests can only target authorized hosts (`localhost`, `127.0.0.1`, `::1` or `TEST_DB_ALLOWED_HOSTS`), rejecting unauthorized remote hosts.
+4. **Rejection of Application Users and Superusers:** `testDb.js` immediately rejects `namlatic_app` and administrative superusers (`postgres`, `root`, `admin`), preventing test execution under elevated privileges.
 
 ---
 
@@ -2477,7 +2485,14 @@ Software engineering is an iterative journey of continuous refinement, automated
 - **Key Files:** `server/tests/helpers/testDb.js`, `server/tests/integration/auth.database.test.js`.
 - **Technical Hurdles Overcome:** Implemented strict test database name assertions (`namlatic_hotel_test`) and tracked ID fixture teardown (`WHERE id = ANY($1::bigint[])`).
 - **Verified Commit:** `154dd46e9ee0b9ef1782c9679d61980d26dc9aad`.
-- **Current Milestone:** **402 passing automated tests (183 backend unit, 80 backend integration, 139 frontend unit).**
+
+---
+
+### Phase 5F-A2.1.2: Dedicated Test Role and Database Safety
+- **Objective:** Strengthen integration test database security and least-privilege isolation by provisioning a dedicated non-superuser role and hardening runtime validation guards.
+- **Key Files:** `server/tests/helpers/testDb.js`, `server/tests/unit/testDb.config.test.js`, `server/.env.example`.
+- **Technical Hurdles Overcome:** Created dedicated non-superuser role `namlatic_test` (`NOSUPERUSER NOCREATEDB NOCREATEROLE`) with privileges strictly on `namlatic_hotel_test` and zero permissions on the development database `namlatic_hotel`. Enforced exact test database name matching, authorized host allowlisting (rejecting unauthorized remote hosts while supporting custom CI hosts via `TEST_DB_ALLOWED_HOSTS`), strict rejection of application user `namlatic_app` and superusers (`postgres`, `root`, `admin`), and purged all real-looking credential fixtures in unit tests.
+- **Current Milestone:** **414 passing automated tests (195 backend unit, 80 backend integration, 139 frontend unit).**
 
 ---
 
@@ -3408,7 +3423,7 @@ Review this cheat sheet in the 15 minutes before your interview. It summarizes e
 ### Core Facts at a Glance
 - **Project Name:** Namlatic Hotel Owner Portal
 - **Stack:** PERN (PostgreSQL 18.6, Express.js 4.19, React 18.3, Node.js 18+)
-- **Test Baseline:** **402 Passing Tests** (183 backend unit, 80 backend integration on dedicated `namlatic_hotel_test`, 139 frontend unit in Vitest).
+- **Test Baseline:** **414 Passing Tests** (195 backend unit, 80 backend integration on dedicated `namlatic_hotel_test`, 139 frontend unit in Vitest).
 - **Git Branch:** `main` (Latest commit verified on GitHub).
 - **Storage:** Local disk in dev (`server/uploads/`); Cloudflare R2 adapter implemented for zero-egress production.
 - **Security:** Argon2id password hashing, PostgreSQL session store, magic-byte inspection, parameterized SQL, Helmet HTTP headers, rate limiting.
@@ -3436,7 +3451,7 @@ Review this cheat sheet in the 15 minutes before your interview. It summarizes e
 9. **How do you prevent SQL wildcard injection?**
    *We escape literal `%` and `_` characters in search queries using `str.replace(/([%_\\])/g, '\\$1')` and include `ESCAPE '\\'` explicitly in our parameterized SQL queries.*
 10. **How was the integration test database isolated?**
-    *In Phase 5F-A2.1.1, we created a dedicated `namlatic_hotel_test` database guard and replaced broad `DELETE FROM users` with a tracked ID pattern: `DELETE FROM users WHERE id = ANY($1::bigint[])`.*
+    *In Phase 5F-A2.1.1 and 5F-A2.1.2, we created a dedicated `namlatic_hotel_test` database guard, restricted execution to a dedicated non-superuser role `namlatic_test` with zero permissions on the development database, enforced exact DB name and allowed-host validation, and replaced broad `DELETE FROM users` with tracked ID cleanup: `DELETE FROM users WHERE id = ANY($1::bigint[])`.*
 
 ---
 

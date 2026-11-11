@@ -1,12 +1,17 @@
 /**
- * Dedicated Test Database Isolation Helper
+ * Dedicated Test Database Isolation Helper (Phase 5F-A2.1.1 & Phase 5F-A2.1.2)
  *
  * Guarantees that integration tests:
  * 1. Strictly require an explicit TEST_DATABASE_URL.
  * 2. Reject execution when NODE_ENV is 'production'.
- * 3. Enforce that the database name is a disposable test database (must contain 'test' and cannot be 'namlatic_hotel' or 'postgres').
- * 4. Never touch the application development or production database.
- * 5. Log only the sanitized database name (never credentials or full connection strings).
+ * 3. Enforce exact test database name (namlatic_hotel_test or TEST_DB_NAME).
+ * 4. Reject protected database names ('namlatic_hotel', 'postgres', 'production', 'neondb') and non-test databases.
+ * 5. Enforce explicit authorized host configuration (default: localhost, 127.0.0.1, ::1, or TEST_DB_ALLOWED_HOSTS).
+ * 6. Require an explicit non-superuser test database role (default: namlatic_test or TEST_DB_USER).
+ * 7. Strictly reject the normal application database user ('namlatic_app' or DB_USER).
+ * 8. Strictly reject administrative/superuser accounts ('postgres', 'root', 'admin').
+ * 9. Never touch the application development or production database.
+ * 10. Log only sanitized database and host identity without exposing credentials.
  */
 
 const { Pool } = require('pg');
@@ -16,11 +21,33 @@ const dotenv = require('dotenv');
 // Load environment from server/.env if present
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
+const DEFAULT_EXPECTED_DB = 'namlatic_hotel_test';
+const DEFAULT_EXPECTED_ROLE = 'namlatic_test';
+const PROTECTED_DATABASES = new Set(['namlatic_hotel', 'postgres', 'production', 'neondb']);
+const FORBIDDEN_ADMIN_ROLES = new Set(['postgres', 'root', 'admin', 'administrator', 'superuser']);
+const DEFAULT_LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '::1', '[::1]'];
+
+/**
+ * Returns the set of authorized database hosts for integration tests.
+ * Defaults strictly to local loopback hosts (localhost, 127.0.0.1, ::1).
+ * Custom hosts for isolated CI pipelines can be explicitly added via TEST_DB_ALLOWED_HOSTS.
+ *
+ * @returns {Set<string>}
+ */
+function getAuthorizedHosts() {
+  const customHosts = process.env.TEST_DB_ALLOWED_HOSTS
+    ? process.env.TEST_DB_ALLOWED_HOSTS.split(',')
+        .map((h) => h.trim().toLowerCase())
+        .filter(Boolean)
+    : [];
+  return new Set([...DEFAULT_LOOPBACK_HOSTS, ...customHosts]);
+}
+
 /**
  * Validates and sanitizes TEST_DATABASE_URL against accidental execution
- * on development or production databases.
+ * on development or production databases, unauthorized hosts, or privileged roles.
  *
- * @returns {{ connectionString: string, dbName: string }}
+ * @returns {{ connectionString: string, dbName: string, dbHost: string, dbUser: string }}
  */
 function validateTestDatabaseConfig() {
   const nodeEnv = process.env.NODE_ENV || 'test';
@@ -32,7 +59,7 @@ function validateTestDatabaseConfig() {
   if (!rawUrl || typeof rawUrl !== 'string' || rawUrl.trim() === '') {
     throw new Error(
       'TEST_DATABASE_URL environment variable is required to run integration tests. ' +
-        'Tests must execute against an isolated disposable database (e.g. postgresql://user:pass@localhost:5432/namlatic_hotel_test) ' +
+        'Tests must execute against an isolated disposable database (e.g. postgresql://namlatic_test:pass@localhost:5432/namlatic_hotel_test) ' +
         'and never against development or production databases.'
     );
   }
@@ -48,14 +75,63 @@ function validateTestDatabaseConfig() {
     throw new Error('TEST_DATABASE_URL must use postgres: or postgresql: protocol.');
   }
 
+  // 1. Host authorization validation
+  const hostname = (parsed.hostname || '').toLowerCase();
+  if (!hostname) {
+    throw new Error('TEST_DATABASE_URL must specify a target host (e.g. localhost).');
+  }
+
+  const authorizedHosts = getAuthorizedHosts();
+  if (!authorizedHosts.has(hostname)) {
+    throw new Error(
+      `Safety check failed: Host "${parsed.hostname}" is not an authorized test database host. ` +
+        `Allowed hosts: [${Array.from(authorizedHosts).join(', ')}]. ` +
+        'Do not run integration tests against unauthorized or remote hosts without explicit configuration in TEST_DB_ALLOWED_HOSTS.'
+    );
+  }
+
+  // 2. Database user / role validation
+  const rawUsername = parsed.username ? decodeURIComponent(parsed.username).trim() : '';
+  if (!rawUsername) {
+    throw new Error(
+      'TEST_DATABASE_URL must specify a dedicated test database user (e.g. "namlatic_test").'
+    );
+  }
+
+  // Rejection of application database user
+  const appDbUser = (process.env.DB_USER || 'namlatic_app').trim().toLowerCase();
+  const lowerUser = rawUsername.toLowerCase();
+  if (lowerUser === 'namlatic_app' || lowerUser === appDbUser) {
+    throw new Error(
+      `Safety check failed: TEST_DATABASE_URL uses application database user "${rawUsername}". ` +
+        'Integration tests must not run as the application database user. Use a dedicated non-superuser test role (e.g. "namlatic_test").'
+    );
+  }
+
+  // Rejection of administrative / superuser accounts
+  if (FORBIDDEN_ADMIN_ROLES.has(lowerUser)) {
+    throw new Error(
+      `Safety check failed: TEST_DATABASE_URL uses administrative/superuser role "${rawUsername}". ` +
+        'Integration tests must run under a dedicated, non-superuser role with least privileges.'
+    );
+  }
+
+  // Verification of designated test role
+  const expectedRole = (process.env.TEST_DB_USER || DEFAULT_EXPECTED_ROLE).trim();
+  if (rawUsername !== expectedRole) {
+    throw new Error(
+      `Safety check failed: Database role "${rawUsername}" in TEST_DATABASE_URL does not match designated test role "${expectedRole}".`
+    );
+  }
+
+  // 3. Database name validation
   const dbName = parsed.pathname.replace(/^\//, '').trim();
   if (!dbName) {
     throw new Error('TEST_DATABASE_URL must specify a target database name in its path.');
   }
 
-  // Safety checks against primary/production databases
   const lowerDb = dbName.toLowerCase();
-  if (lowerDb === 'namlatic_hotel' || lowerDb === 'postgres' || lowerDb === 'production' || lowerDb === 'neondb') {
+  if (PROTECTED_DATABASES.has(lowerDb)) {
     throw new Error(
       `Safety check failed: TEST_DATABASE_URL points to protected database "${dbName}". ` +
         'Integration tests must run against a designated disposable test database (e.g. "namlatic_hotel_test").'
@@ -68,9 +144,18 @@ function validateTestDatabaseConfig() {
     );
   }
 
+  const expectedDbName = (process.env.TEST_DB_NAME || DEFAULT_EXPECTED_DB).trim();
+  if (dbName !== expectedDbName) {
+    throw new Error(
+      `Safety check failed: Test database name "${dbName}" does not match exact expected test database name "${expectedDbName}".`
+    );
+  }
+
   return {
     connectionString: rawUrl.trim(),
     dbName,
+    dbHost: parsed.hostname,
+    dbUser: rawUsername,
   };
 }
 
@@ -82,7 +167,7 @@ let testPoolInstance = null;
  */
 function getTestPool() {
   if (!testPoolInstance) {
-    const { connectionString, dbName } = validateTestDatabaseConfig();
+    const { connectionString, dbName, dbHost, dbUser } = validateTestDatabaseConfig();
     testPoolInstance = new Pool({
       connectionString,
       max: 10,
@@ -94,8 +179,8 @@ function getTestPool() {
       console.error('[TEST DB ERROR]', err.message);
     });
 
-    // Output sanitized database identity (database name only)
-    console.log(`[TEST DB] Verified connection to dedicated test database: "${dbName}"`);
+    // Output sanitized database and role identity (never passwords or connection string)
+    console.log(`[TEST DB] Verified connection to dedicated test database: "${dbName}" on "${dbHost}" as test role "${dbUser}"`);
   }
   return testPoolInstance;
 }
@@ -114,4 +199,5 @@ module.exports = {
   validateTestDatabaseConfig,
   getTestPool,
   closeTestPool,
+  getAuthorizedHosts,
 };

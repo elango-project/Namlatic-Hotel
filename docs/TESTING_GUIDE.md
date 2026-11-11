@@ -71,13 +71,16 @@ Built entirely using Node.js's built-in `node:test` framework to avoid bloating 
    - Unicode code point backspace: Accurately removes multibyte Unicode emojis code point by code point.
    - Signal handling & cleanup: Restores terminal raw mode and rejects with `USER_CANCELLED` error code on Ctrl+C (`\u0003`).
    - Non-TTY fallback: Falls back cleanly to line reading when input stream is not a TTY (supporting automated CI/CD and piped inputs).
-9. **`testDb.config.test.js` (10 tests - Phase 5F-A2.1.1):**
+9. **`testDb.config.test.js` (22 tests - Phase 5F-A2.1.1 & Phase 5F-A2.1.2):**
    - Immediate rejection if `NODE_ENV === 'production'`.
    - Rejection when `TEST_DATABASE_URL` is missing or whitespace only.
    - Rejection of malformed URLs and non-PostgreSQL protocols (`mysql:`, `http:`).
-   - Rejection of URLs without target database name.
-   - Safety checks rejecting primary development database `namlatic_hotel`, PostgreSQL system database `postgres`, and databases without `test` substring.
-   - Successful validation and extraction of sanitized test database name.
+   - Rejection of URLs without target database name or missing database username.
+   - Rejection of normal application database user (`namlatic_app` / `DB_USER`) and administrative superusers (`postgres`, `root`, `admin`).
+   - Enforcement that configured role strictly matches the designated test role (`namlatic_test` or `TEST_DB_USER`).
+   - Safety checks rejecting protected databases (`namlatic_hotel`, `postgres`, `production`, `neondb`), non-test database names, and names that do not match exact expected test database (`namlatic_hotel_test` or `TEST_DB_NAME`).
+   - Explicit allowed-host enforcement rejecting unauthorized remote hosts while supporting custom CI hosts via `TEST_DB_ALLOWED_HOSTS`.
+   - Successful validation and extraction of sanitized test database metadata (name, host, test role).
 
 ---
 
