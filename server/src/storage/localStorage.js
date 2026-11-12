@@ -65,8 +65,8 @@ class LocalStorageAdapter {
       return false;
     }
 
-    // Must never attempt to delete R2 references via local filesystem
-    if (storageReference.startsWith('r2:')) {
+    // Must never attempt to delete cloud references via local filesystem
+    if (storageReference.startsWith('r2:') || storageReference.startsWith('cloudinary:')) {
       return false;
     }
 
@@ -123,7 +123,7 @@ class LocalStorageAdapter {
    */
   isManagedReference(storageReference) {
     if (!storageReference || typeof storageReference !== 'string') return false;
-    if (storageReference.startsWith('r2:')) return false;
+    if (storageReference.startsWith('r2:') || storageReference.startsWith('cloudinary:')) return false;
     return storageReference.startsWith('/uploads/hotels/') || !storageReference.includes(':');
   }
 }

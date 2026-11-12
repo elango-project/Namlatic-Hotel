@@ -5,8 +5,14 @@ const path = require('path');
 const os = require('os');
 const { LocalStorageAdapter } = require('../../src/storage/localStorage');
 const { R2StorageAdapter } = require('../../src/storage/r2Storage');
+const { CloudinaryStorageAdapter } = require('../../src/storage/cloudinaryStorage');
 const { createStorageService } = require('../../src/storage');
-const { parseMediaStorageDriver, parseR2Config, parseAndValidateEnv } = require('../../src/config/env');
+const {
+  parseMediaStorageDriver,
+  parseR2Config,
+  parseCloudinaryConfig,
+  parseAndValidateEnv,
+} = require('../../src/config/env');
 
 describe('Unit Tests: Cloudflare R2 & Media Storage Abstraction (Phase 5D)', () => {
   // --------------------------------------------------------------------------
@@ -21,11 +27,13 @@ describe('Unit Tests: Cloudflare R2 & Media Storage Abstraction (Phase 5D)', () 
       assert.equal(testDriver, 'local');
     });
 
-    it('parses valid "local" and "r2" drivers in development', () => {
+    it('parses valid "local", "r2", and "cloudinary" drivers in development', () => {
       assert.equal(parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'local' }, 'development'), 'local');
       assert.equal(parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'LOCAL' }, 'development'), 'local');
       assert.equal(parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'r2' }, 'development'), 'r2');
       assert.equal(parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'R2 ' }, 'development'), 'r2');
+      assert.equal(parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'cloudinary' }, 'development'), 'cloudinary');
+      assert.equal(parseMediaStorageDriver({ MEDIA_STORAGE_DRIVER: 'CLOUDINARY ' }, 'development'), 'cloudinary');
     });
 
     it('strictly forbids silent fallback in production when MEDIA_STORAGE_DRIVER is omitted', () => {
@@ -91,6 +99,39 @@ describe('Unit Tests: Cloudflare R2 & Media Storage Abstraction (Phase 5D)', () 
       assert.equal(config.r2Config.publicBaseUrl, 'https://cdn.namlatic.com');
       assert.equal(config.r2Config.endpoint, 'https://acc1234567890def.r2.cloudflarestorage.com');
       assert.equal(config.r2Config.region, 'auto');
+      assert.equal(config.cloudinaryConfig, null);
+    });
+
+    it('rejects production with "cloudinary" when Cloudinary credentials are missing', () => {
+      assert.throws(
+        () =>
+          parseAndValidateEnv({
+            NODE_ENV: 'production',
+            MEDIA_STORAGE_DRIVER: 'cloudinary',
+            DATABASE_URL: 'postgresql://user:pass@ep-host.aws.neon.tech/neondb?sslmode=require&channel_binding=prefer',
+            BACKEND_PROXY_SECRET: 'test_proxy_secret_at_least_32_chars_long_12345',
+          }),
+        /Cloudinary configuration error: Missing required environment variable\(s\)/
+      );
+    });
+
+    it('accepts valid production Cloudinary configuration without requiring R2 variables', () => {
+      const config = parseAndValidateEnv({
+        NODE_ENV: 'production',
+        MEDIA_STORAGE_DRIVER: 'cloudinary',
+        CLOUDINARY_CLOUD_NAME: 'namlatic-cloud',
+        CLOUDINARY_API_KEY: '123456789012345',
+        CLOUDINARY_API_SECRET: 'secret_key_super_secret',
+        DATABASE_URL: 'postgresql://user:pass@ep-host.aws.neon.tech/neondb?sslmode=require&channel_binding=prefer',
+        BACKEND_PROXY_SECRET: 'test_proxy_secret_at_least_32_chars_long_12345',
+      });
+
+      assert.equal(config.mediaStorageDriver, 'cloudinary');
+      assert.equal(config.cloudinaryConfig.cloudName, 'namlatic-cloud');
+      assert.equal(config.cloudinaryConfig.apiKey, '123456789012345');
+      assert.equal(config.cloudinaryConfig.apiSecret, 'secret_key_super_secret');
+      assert.equal(config.cloudinaryConfig.folder, 'namlatic-hotel/hotels');
+      assert.equal(config.r2Config, null); // R2 credentials are NOT required
     });
 
     it('parses valid R2 configuration and normalizes endpoint and base URL', () => {
@@ -288,6 +329,101 @@ describe('Unit Tests: Cloudflare R2 & Media Storage Abstraction (Phase 5D)', () 
       } catch (err) {
         assert.equal(err.message.includes('sensitive-key-12345'), false);
         assert.equal(err.message.includes('top-secret-password-xyz'), false);
+      }
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Cloudinary Configuration Validation (Phase 5G-A)
+  // --------------------------------------------------------------------------
+  describe('Cloudinary Configuration Validation', () => {
+    it('parses valid Cloudinary configuration with default folder', () => {
+      const config = parseCloudinaryConfig({
+        CLOUDINARY_CLOUD_NAME: 'namlatic-cloud',
+        CLOUDINARY_API_KEY: '123456789012345',
+        CLOUDINARY_API_SECRET: 'super-secret-key-xyz',
+      });
+
+      assert.equal(config.cloudName, 'namlatic-cloud');
+      assert.equal(config.apiKey, '123456789012345');
+      assert.equal(config.apiSecret, 'super-secret-key-xyz');
+      assert.equal(config.folder, 'namlatic-hotel/hotels');
+    });
+
+    it('parses valid Cloudinary configuration with custom folder', () => {
+      const config = parseCloudinaryConfig({
+        CLOUDINARY_CLOUD_NAME: 'namlatic-cloud',
+        CLOUDINARY_API_KEY: '123456789012345',
+        CLOUDINARY_API_SECRET: 'super-secret-key-xyz',
+        CLOUDINARY_FOLDER: 'custom-portfolio/hotel-assets',
+      });
+
+      assert.equal(config.folder, 'custom-portfolio/hotel-assets');
+    });
+
+    it('fails fast when required Cloudinary variables are missing', () => {
+      assert.throws(
+        () => parseCloudinaryConfig({}),
+        /Cloudinary configuration error: Missing required environment variable\(s\): CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET/
+      );
+
+      assert.throws(
+        () =>
+          parseCloudinaryConfig({
+            CLOUDINARY_CLOUD_NAME: 'namlatic-cloud',
+            // Missing API key and secret
+          }),
+        /CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET/
+      );
+    });
+
+    it('rejects invalid characters in CLOUDINARY_CLOUD_NAME', () => {
+      assert.throws(
+        () =>
+          parseCloudinaryConfig({
+            CLOUDINARY_CLOUD_NAME: 'invalid cloud name with spaces!',
+            CLOUDINARY_API_KEY: '123',
+            CLOUDINARY_API_SECRET: 'sec',
+          }),
+        /CLOUDINARY_CLOUD_NAME contains invalid characters/
+      );
+    });
+
+    it('rejects relative traversal in CLOUDINARY_FOLDER', () => {
+      assert.throws(
+        () =>
+          parseCloudinaryConfig({
+            CLOUDINARY_CLOUD_NAME: 'namlatic-cloud',
+            CLOUDINARY_API_KEY: '123',
+            CLOUDINARY_API_SECRET: 'sec',
+            CLOUDINARY_FOLDER: '../escape-folder',
+          }),
+        /CLOUDINARY_FOLDER cannot contain relative parent paths or leading\/trailing slashes/
+      );
+
+      assert.throws(
+        () =>
+          parseCloudinaryConfig({
+            CLOUDINARY_CLOUD_NAME: 'namlatic-cloud',
+            CLOUDINARY_API_KEY: '123',
+            CLOUDINARY_API_SECRET: 'sec',
+            CLOUDINARY_FOLDER: '/leading-slash',
+          }),
+        /CLOUDINARY_FOLDER cannot contain relative parent paths or leading\/trailing slashes/
+      );
+    });
+
+    it('never leaks secret keys in Cloudinary error messages', () => {
+      try {
+        parseCloudinaryConfig({
+          CLOUDINARY_CLOUD_NAME: 'bad cloud name!',
+          CLOUDINARY_API_KEY: 'sensitive-api-key-999',
+          CLOUDINARY_API_SECRET: 'super-sensitive-secret-token-888',
+        });
+        assert.fail('Should have thrown an error');
+      } catch (err) {
+        assert.equal(err.message.includes('sensitive-api-key-999'), false);
+        assert.equal(err.message.includes('super-sensitive-secret-token-888'), false);
       }
     });
   });
@@ -619,9 +755,453 @@ describe('Unit Tests: Cloudflare R2 & Media Storage Abstraction (Phase 5D)', () 
   });
 
   // --------------------------------------------------------------------------
+  // Cloudinary Storage Adapter Unit Tests (Phase 5G-A)
+  // --------------------------------------------------------------------------
+  describe('CloudinaryStorageAdapter Unit Tests (Mocked Cloudinary SDK)', () => {
+    it('generates predictable, secure server-side public IDs with configured folder', () => {
+      const adapter = new CloudinaryStorageAdapter({
+        cloudName: 'namlatic-cloud',
+        apiKey: '123',
+        apiSecret: 'sec',
+        folder: 'namlatic-hotel/hotels',
+        cloudinaryClient: { uploader: {}, url: () => '' },
+      });
+
+      const publicId1 = adapter.generatePublicId();
+      const publicId2 = adapter.generatePublicId();
+
+      assert.match(publicId1, /^namlatic-hotel\/hotels\/[0-9a-f-]{36}$/);
+      assert.match(publicId2, /^namlatic-hotel\/hotels\/[0-9a-f-]{36}$/);
+      assert.notEqual(publicId1, publicId2);
+    });
+
+    it('identifies managed Cloudinary references and rejects invalid or traversal references', () => {
+      const adapter = new CloudinaryStorageAdapter({
+        cloudName: 'namlatic-cloud',
+        apiKey: '123',
+        apiSecret: 'sec',
+        cloudinaryClient: { uploader: {}, url: () => '' },
+      });
+
+      assert.equal(adapter.isManagedReference('cloudinary:namlatic-hotel/hotels/12345'), true);
+      assert.equal(adapter.isManagedReference('cloudinary:namlatic-hotel/hotels/12345.jpg'), true);
+      assert.equal(adapter.isManagedReference('cloudinary:'), false);
+      assert.equal(adapter.isManagedReference('cloudinary:   '), false);
+      assert.equal(adapter.isManagedReference('cloudinary:../traversal/path'), false);
+      assert.equal(adapter.isManagedReference('cloudinary:/root/path'), false);
+      assert.equal(adapter.isManagedReference('r2:hotels/12345.jpg'), false);
+      assert.equal(adapter.isManagedReference('/uploads/hotels/12345.jpg'), false);
+      assert.equal(adapter.isManagedReference(null), false);
+      assert.equal(adapter.isManagedReference(undefined), false);
+      assert.equal(adapter.isManagedReference(''), false);
+      assert.equal(adapter.isManagedReference(123), false);
+    });
+
+    it('safely extracts public ID and blocks directory traversal', () => {
+      const adapter = new CloudinaryStorageAdapter({
+        cloudName: 'namlatic-cloud',
+        apiKey: '123',
+        apiSecret: 'sec',
+        cloudinaryClient: { uploader: {}, url: () => '' },
+      });
+
+      assert.equal(
+        adapter.extractPublicId('cloudinary:namlatic-hotel/hotels/sample-id'),
+        'namlatic-hotel/hotels/sample-id'
+      );
+      assert.equal(adapter.extractPublicId('cloudinary:'), null);
+      assert.equal(adapter.extractPublicId('cloudinary:../traversal'), null);
+      assert.equal(adapter.extractPublicId('cloudinary:/leading-slash'), null);
+      assert.equal(adapter.extractPublicId('not-a-cloudinary-ref'), null);
+    });
+
+    it('uploads staged file via signed upload and unlinks staged local file on success', async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cloudinary-test-'));
+      const stagedFilePath = path.join(tmpDir, 'staged-image.jpg');
+      fs.writeFileSync(stagedFilePath, Buffer.from([0xff, 0xd8, 0xff]));
+
+      const uploadCalls = [];
+      const mockCloudinary = {
+        uploader: {
+          upload: async (filePath, options) => {
+            uploadCalls.push({ filePath, options });
+            return {
+              public_id: options.public_id,
+              secure_url: `https://res.cloudinary.com/namlatic-cloud/image/upload/${options.public_id}.jpg`,
+              format: 'jpg',
+              resource_type: 'image',
+            };
+          },
+        },
+        url: (publicId) => `https://res.cloudinary.com/namlatic-cloud/image/upload/${publicId}`,
+      };
+
+      const adapter = new CloudinaryStorageAdapter({
+        cloudName: 'namlatic-cloud',
+        apiKey: '123',
+        apiSecret: 'sec',
+        cloudinaryClient: mockCloudinary,
+      });
+
+      const result = await adapter.upload({
+        path: stagedFilePath,
+        mimetype: 'image/jpeg',
+      });
+
+      assert.equal(uploadCalls.length, 1);
+      assert.equal(uploadCalls[0].filePath, stagedFilePath);
+      assert.equal(uploadCalls[0].options.resource_type, 'image');
+      assert.equal(uploadCalls[0].options.overwrite, false);
+      assert.match(result.storageReference, /^cloudinary:namlatic-hotel\/hotels\/[0-9a-f-]{36}$/);
+      assert.match(
+        result.publicUrl,
+        /^https:\/\/res\.cloudinary\.com\/namlatic-cloud\/image\/upload\/namlatic-hotel\/hotels\/[0-9a-f-]{36}\.jpg$/
+      );
+      assert.equal(result.key, uploadCalls[0].options.public_id);
+
+      // Verify staged local file is unlinked on upload success
+      assert.equal(fs.existsSync(stagedFilePath), false);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('cleans up staged local file on upload failure and propagates error safely without leaking secrets', async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cloudinary-fail-test-'));
+      const stagedFilePath = path.join(tmpDir, 'staged-image-fail.jpg');
+      fs.writeFileSync(stagedFilePath, Buffer.from([0xff, 0xd8, 0xff]));
+
+      const mockCloudinary = {
+        uploader: {
+          upload: async () => {
+            throw new Error('Simulated Cloudinary API 500 network timeout');
+          },
+        },
+        url: () => '',
+      };
+
+      const adapter = new CloudinaryStorageAdapter({
+        cloudName: 'namlatic-cloud',
+        apiKey: '123',
+        apiSecret: 'sec',
+        cloudinaryClient: mockCloudinary,
+      });
+
+      await assert.rejects(
+        async () => {
+          await adapter.upload({ path: stagedFilePath });
+        },
+        /Failed to upload media to Cloudinary: Simulated Cloudinary API 500 network timeout/
+      );
+
+      // Verify staged local file was unlinked despite upload failure
+      assert.equal(fs.existsSync(stagedFilePath), false);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('rejects upload when file or file.path is missing', async () => {
+      const adapter = new CloudinaryStorageAdapter({
+        cloudName: 'namlatic-cloud',
+        apiKey: '123',
+        apiSecret: 'sec',
+        cloudinaryClient: { uploader: {}, url: () => '' },
+      });
+
+      await assert.rejects(
+        () => adapter.upload(null),
+        /Cloudinary upload error: file with a valid local path is required/
+      );
+
+      await assert.rejects(
+        () => adapter.upload({}),
+        /Cloudinary upload error: file with a valid local path is required/
+      );
+    });
+
+    it('deletes asset via uploader.destroy with resource_type: image and invalidate: true', async () => {
+      const destroyCalls = [];
+      const mockCloudinary = {
+        uploader: {
+          destroy: async (publicId, options) => {
+            destroyCalls.push({ publicId, options });
+            return { result: 'ok' };
+          },
+        },
+        url: () => '',
+      };
+
+      const adapter = new CloudinaryStorageAdapter({
+        cloudName: 'namlatic-cloud',
+        apiKey: '123',
+        apiSecret: 'sec',
+        cloudinaryClient: mockCloudinary,
+      });
+
+      const deleted = await adapter.delete('cloudinary:namlatic-hotel/hotels/photo-12345');
+      assert.equal(deleted, true);
+      assert.equal(destroyCalls.length, 1);
+      assert.equal(destroyCalls[0].publicId, 'namlatic-hotel/hotels/photo-12345');
+      assert.equal(destroyCalls[0].options.resource_type, 'image');
+      assert.equal(destroyCalls[0].options.invalidate, true);
+    });
+
+    it('treats result: "not found" as successful deletion (idempotent delete)', async () => {
+      const mockCloudinary = {
+        uploader: {
+          destroy: async () => ({ result: 'not found' }),
+        },
+        url: () => '',
+      };
+
+      const adapter = new CloudinaryStorageAdapter({
+        cloudName: 'namlatic-cloud',
+        apiKey: '123',
+        apiSecret: 'sec',
+        cloudinaryClient: mockCloudinary,
+      });
+
+      const deleted = await adapter.delete('cloudinary:namlatic-hotel/hotels/missing-asset');
+      assert.equal(deleted, true);
+    });
+
+    it('throws error when uploader.destroy returns result: "error"', async () => {
+      const mockCloudinary = {
+        uploader: {
+          destroy: async () => ({ result: 'error', message: 'Asset locked' }),
+        },
+        url: () => '',
+      };
+
+      const adapter = new CloudinaryStorageAdapter({
+        cloudName: 'namlatic-cloud',
+        apiKey: '123',
+        apiSecret: 'sec',
+        cloudinaryClient: mockCloudinary,
+      });
+
+      await assert.rejects(
+        () => adapter.delete('cloudinary:namlatic-hotel/hotels/locked-asset'),
+        /Cloudinary asset deletion failed: Asset locked/
+      );
+    });
+
+    it('returns false when delete() is called with unmanaged references', async () => {
+      const adapter = new CloudinaryStorageAdapter({
+        cloudName: 'namlatic-cloud',
+        apiKey: '123',
+        apiSecret: 'sec',
+        cloudinaryClient: { uploader: {}, url: () => '' },
+      });
+
+      assert.equal(await adapter.delete('/uploads/hotels/legacy.jpg'), false);
+      assert.equal(await adapter.delete('r2:hotels/r2-file.png'), false);
+      assert.equal(await adapter.delete(null), false);
+      assert.equal(await adapter.delete(''), false);
+    });
+
+    it('resolves secure public URL using cloudinary.url()', () => {
+      const adapter = new CloudinaryStorageAdapter({
+        cloudName: 'namlatic-cloud',
+        apiKey: '123',
+        apiSecret: 'sec',
+        cloudinaryClient: {
+          uploader: {},
+          url: (publicId) => `https://res.cloudinary.com/namlatic-cloud/image/upload/${publicId}`,
+        },
+      });
+
+      const url = adapter.getPublicUrl('cloudinary:namlatic-hotel/hotels/sample-asset');
+      assert.equal(
+        url,
+        'https://res.cloudinary.com/namlatic-cloud/image/upload/namlatic-hotel/hotels/sample-asset'
+      );
+    });
+
+    it('returns null for invalid or falsy storage references in getPublicUrl', () => {
+      const adapter = new CloudinaryStorageAdapter({
+        cloudName: 'namlatic-cloud',
+        apiKey: '123',
+        apiSecret: 'sec',
+        cloudinaryClient: { uploader: {}, url: () => '' },
+      });
+
+      assert.equal(adapter.getPublicUrl(null), null);
+      assert.equal(adapter.getPublicUrl(''), null);
+      assert.equal(adapter.getPublicUrl('cloudinary:'), null);
+      assert.equal(adapter.getPublicUrl('cloudinary:../traversal'), null);
+      // Non-cloudinary references returned as-is
+      assert.equal(adapter.getPublicUrl('/uploads/hotels/pic.jpg'), '/uploads/hotels/pic.jpg');
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // 4. Unified StorageService Router
   // --------------------------------------------------------------------------
   describe('Unified StorageService Routing & Reference Isolation', () => {
+    it('routes uploads to Cloudinary when active driver is cloudinary', async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cloudinary-router-test-'));
+      const stagedFilePath = path.join(tmpDir, 'router-test.jpg');
+      fs.writeFileSync(stagedFilePath, Buffer.from([0xff, 0xd8, 0xff]));
+
+      const uploadCalls = [];
+      const mockCloudinary = {
+        uploader: {
+          upload: async (filePath, options) => {
+            uploadCalls.push({ filePath, options });
+            return {
+              public_id: options.public_id,
+              secure_url: `https://res.cloudinary.com/namlatic-cloud/image/upload/${options.public_id}.jpg`,
+            };
+          },
+        },
+        url: (publicId) => `https://res.cloudinary.com/namlatic-cloud/image/upload/${publicId}`,
+      };
+
+      const storageService = createStorageService({
+        driver: 'cloudinary',
+        cloudinaryConfig: {
+          cloudName: 'namlatic-cloud',
+          apiKey: 'key',
+          apiSecret: 'sec',
+          folder: 'namlatic-hotel/hotels',
+        },
+        cloudinaryClient: mockCloudinary,
+      });
+
+      assert.equal(storageService.getActiveAdapter() instanceof CloudinaryStorageAdapter, true);
+
+      const result = await storageService.upload({ path: stagedFilePath });
+      assert.equal(uploadCalls.length, 1);
+      assert.match(result.storageReference, /^cloudinary:namlatic-hotel\/hotels\/[0-9a-f-]{36}$/);
+
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('intelligently routes deletes so local filesystem and S3 never receive cloudinary: references', async () => {
+      const cloudinaryDeletes = [];
+      const mockCloudinary = {
+        uploader: {
+          destroy: async (publicId) => {
+            cloudinaryDeletes.push(publicId);
+            return { result: 'ok' };
+          },
+        },
+        url: () => '',
+      };
+
+      const s3Calls = [];
+      const mockS3 = {
+        send: async (cmd) => {
+          s3Calls.push(cmd);
+          return {};
+        },
+      };
+
+      const storageService = createStorageService({
+        driver: 'cloudinary',
+        cloudinaryConfig: {
+          cloudName: 'namlatic-cloud',
+          apiKey: 'key',
+          apiSecret: 'sec',
+        },
+        cloudinaryClient: mockCloudinary,
+        r2Config: {
+          accountId: 'acc',
+          accessKeyId: 'k',
+          secretAccessKey: 's',
+          bucketName: 'test-bucket',
+          publicBaseUrl: 'https://cdn.example.com',
+        },
+        s3Client: mockS3,
+      });
+
+      // 1. Delete a Cloudinary reference -> routes to Cloudinary (not S3 or local disk)
+      const deletedCloudinary = await storageService.delete('cloudinary:namlatic-hotel/hotels/asset-999');
+      assert.equal(deletedCloudinary, true);
+      assert.equal(cloudinaryDeletes.length, 1);
+      assert.equal(cloudinaryDeletes[0], 'namlatic-hotel/hotels/asset-999');
+      assert.equal(s3Calls.length, 0); // Zero S3 calls!
+
+      // 2. Delete an R2 reference -> routes to R2 (not Cloudinary or local disk)
+      const deletedR2 = await storageService.delete('r2:hotels/r2-file.png');
+      assert.equal(deletedR2, true);
+      assert.equal(s3Calls.length, 1);
+      assert.equal(cloudinaryDeletes.length, 1); // No new Cloudinary calls!
+
+      // 3. Delete a local reference -> routes to local adapter (not Cloudinary or S3)
+      const deletedLocal = await storageService.delete('/uploads/hotels/non-existent.jpg');
+      assert.equal(deletedLocal, false);
+      assert.equal(cloudinaryDeletes.length, 1);
+      assert.equal(s3Calls.length, 1);
+    });
+
+    it('resolves public URLs transparently across local, R2, and Cloudinary references', () => {
+      const storageService = createStorageService({
+        driver: 'cloudinary',
+        cloudinaryConfig: {
+          cloudName: 'namlatic-cloud',
+          apiKey: 'key',
+          apiSecret: 'sec',
+        },
+        cloudinaryClient: {
+          uploader: {},
+          url: (publicId) => `https://res.cloudinary.com/namlatic-cloud/image/upload/${publicId}`,
+        },
+        r2Config: {
+          accountId: 'acc',
+          accessKeyId: 'k',
+          secretAccessKey: 's',
+          bucketName: 'b',
+          publicBaseUrl: 'https://cdn.example.com',
+        },
+        s3Client: { send: async () => {} },
+      });
+
+      // Cloudinary reference resolves to Cloudinary URL
+      assert.equal(
+        storageService.getPublicUrl('cloudinary:namlatic-hotel/hotels/hero-123'),
+        'https://res.cloudinary.com/namlatic-cloud/image/upload/namlatic-hotel/hotels/hero-123'
+      );
+
+      // R2 reference resolves to CDN URL
+      assert.equal(
+        storageService.getPublicUrl('r2:hotels/photo.webp'),
+        'https://cdn.example.com/hotels/photo.webp'
+      );
+
+      // Legacy local reference remains local path
+      assert.equal(
+        storageService.getPublicUrl('/uploads/hotels/old.jpg'),
+        '/uploads/hotels/old.jpg'
+      );
+
+      // Falsy reference returns null
+      assert.equal(storageService.getPublicUrl(null), null);
+    });
+
+    it('isManagedReference identifies local, R2, and Cloudinary references correctly', () => {
+      const storageService = createStorageService({
+        driver: 'cloudinary',
+        cloudinaryConfig: {
+          cloudName: 'namlatic-cloud',
+          apiKey: 'key',
+          apiSecret: 'sec',
+        },
+        cloudinaryClient: { uploader: {}, url: () => '' },
+        r2Config: {
+          accountId: 'acc',
+          accessKeyId: 'k',
+          secretAccessKey: 's',
+          bucketName: 'b',
+          publicBaseUrl: 'https://cdn.example.com',
+        },
+        s3Client: { send: async () => {} },
+      });
+
+      assert.equal(storageService.isManagedReference('cloudinary:namlatic-hotel/hotels/123'), true);
+      assert.equal(storageService.isManagedReference('r2:hotels/123.jpg'), true);
+      assert.equal(storageService.isManagedReference('/uploads/hotels/123.jpg'), true);
+      assert.equal(storageService.isManagedReference('unknown-driver:asset-123'), false);
+      assert.equal(storageService.isManagedReference(null), false);
+    });
     it('intelligently routes deletes so local filesystem never receives r2: references', async () => {
       const r2Calls = [];
       const mockS3 = {

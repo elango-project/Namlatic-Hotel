@@ -39,17 +39,17 @@ The Namlatic Hotel Owner Portal follows a decoupled, cloud-native **PERN** (Post
 |   │ • Dual endpoints: Liveness (/api/health) & Readiness (/api/ready)│                                  |
 |   └───────────────────┬─────────────────────────────┬───────────────┘                                   |
 |                       │                             │                                                   |
-|     3. Encrypted SQL  │                             │ 4. S3 PutObject / DeleteObject                    |
+|     3. Encrypted SQL  │                             │ 4. Signed Image Upload / Destroy                  |
 |        (TLS/SSL)      ▼                             ▼                                                   |
 |   ┌───────────────────────────────┐     ┌───────────────────────────────────┐                           |
-|   │ Neon Serverless PostgreSQL    │     │ Cloudflare R2 Object Storage      │                           |
-|   │ ───────────────────────────   │     │ ─────────────────────────────     │                           |
-|   │ • Dedicated production DB     │     │ • Public read access via custom   │                           |
-|   │ • Least-privilege app role    │     │   domain / r2.dev for sanitized   │                           |
-|   │   (namlatic_app: DML only)    │     │   hotel photographs               │                           |
-|   │ • Dedicated migration role    │     │ • Authenticated write/delete via  │                           |
-|   │   (namlatic_migrator: DDL)    │     │   private S3 credentials          │                           |
-|   │ • Owner singleton constraint  │     │ • Zero egress fee public CDN      │                           |
+|   │ Neon Serverless PostgreSQL    │     │ Cloudinary Media Storage (Active) │                           |
+|   │ ───────────────────────────   │     │ (or Cloudflare R2 Compatible)     │                           |
+|   │ • Dedicated production DB     │     │ ─────────────────────────────     │                           |
+|   │ • Least-privilege app role    │     │ • Public HTTPS image delivery     │                           |
+|   │   (namlatic_app: DML only)    │     │   via Cloudinary Global CDN       │                           |
+|   │ • Dedicated migration role    │     │ • Signed backend upload & delete  │                           |
+|   │   (namlatic_migrator: DDL)    │     │   via official Node.js SDK        │                           |
+|   │ • Owner singleton constraint  │     │ • Generous 25 credit free tier    │                           |
 |   └───────────────────────────────┘     └───────────────────────────────────┘                           |
 |                                                                                                         |
 +---------------------------------------------------------------------------------------------------------+
@@ -75,12 +75,16 @@ Below is the complete, canonical mapping of every environment variable across al
 | `TRUST_PROXY` | Render | Public | Optional | Production | Number of upstream proxy hops to trust (e.g. `1` or `2`). Must be verified empirically on live infrastructure before final release. |
 | `BACKEND_PROXY_SECRET` | Render & Vercel | **Secret** | **Yes** | Production | Cryptographically random shared secret (minimum 32 characters, no default values). Injected by Vercel into `x-vercel-proxy-secret` and verified by Render. |
 | `BACKEND_PROXY_SECRET_OLD` | Render | **Secret** | Optional | Production | Secondary accepted secret for zero-downtime secret rotation. |
-| `MEDIA_STORAGE_DRIVER` | Render | Public | **Yes** | Production | Must be `'r2'`. Setting `'local'` in production is rejected at startup to prevent data loss on ephemeral disks. |
-| `R2_ACCOUNT_ID` | Render | **Secret** | **Yes** | Production | Cloudflare Account ID hex string (32 characters) for R2 API endpoint. |
-| `R2_ACCESS_KEY_ID` | Render | **Secret** | **Yes** | Production | Bucket-scoped R2 S3 access key ID (backend only). |
-| `R2_SECRET_ACCESS_KEY` | Render | **Secret** | **Yes** | Production | Bucket-scoped R2 S3 secret access key (backend only). |
-| `R2_BUCKET_NAME` | Render | Public | **Yes** | Production | Dedicated bucket name (e.g. `namlatic-hotel-media`). |
-| `R2_PUBLIC_BASE_URL` | Render | Public | **Yes** | Production | Public HTTPS CDN URL for sanitized image delivery (e.g. `https://pub-abc123xyz.r2.dev` or custom domain `https://assets.namlatic.com`). |
+| `MEDIA_STORAGE_DRIVER` | Render | Public | **Yes** | Production | Must be `'cloudinary'` (recommended active production provider) or `'r2'`. Setting `'local'` in production is rejected at startup to prevent data loss on ephemeral disks. |
+| `CLOUDINARY_CLOUD_NAME` | Render | **Secret** | **Yes** (if driver=cloudinary) | Production | Cloudinary cloud name for signed backend uploads and delivery. |
+| `CLOUDINARY_API_KEY` | Render | **Secret** | **Yes** (if driver=cloudinary) | Production | Cloudinary API key for signed backend upload and destroy requests. |
+| `CLOUDINARY_API_SECRET` | Render | **Secret** | **Yes** (if driver=cloudinary) | Production | Cloudinary API secret (held exclusively by backend on Render, never exposed to client). |
+| `CLOUDINARY_FOLDER` | Render | Public | Optional | Production | Cloudinary organized folder name (default: `namlatic-hotel/hotels`). |
+| `R2_ACCOUNT_ID` | Render | **Secret** | **Yes** (if driver=r2) | Production | Cloudflare Account ID hex string (32 characters) for R2 API endpoint. |
+| `R2_ACCESS_KEY_ID` | Render | **Secret** | **Yes** (if driver=r2) | Production | Bucket-scoped R2 S3 access key ID (backend only). |
+| `R2_SECRET_ACCESS_KEY` | Render | **Secret** | **Yes** (if driver=r2) | Production | Bucket-scoped R2 S3 secret access key (backend only). |
+| `R2_BUCKET_NAME` | Render | Public | **Yes** (if driver=r2) | Production | Dedicated bucket name (e.g. `namlatic-hotel-media`). |
+| `R2_PUBLIC_BASE_URL` | Render | Public | **Yes** (if driver=r2) | Production | Public HTTPS CDN URL for sanitized image delivery (e.g. `https://pub-abc123xyz.r2.dev` or custom domain `https://assets.namlatic.com`). |
 | `RATE_LIMIT_ENABLED` | Render | Public | Optional | Production | Enables rate limiting (default `true`). |
 | `RATE_LIMIT_WRITE_MAX` | Render | Public | Optional | Production | Max write requests per window per IP (default `60`). |
 | `RATE_LIMIT_WRITE_WINDOW_MS` | Render | Public | Optional | Production | Write rate limit window in ms (default `900000` = 15 mins). |
@@ -211,9 +215,58 @@ Setting `TRUST_PROXY=1` trusts only Render's internal proxy. If Vercel also inje
 
 ---
 
-### 3.3 Target Service 3: Cloudflare R2 (Object Storage Architecture)
+### 3.3 Target Service 3: Cloudinary Media Storage (Primary Production Provider — Phase 5G-A)
 
-Cloudflare R2 provides S3-compatible object storage with **zero egress fees**, delivering hotel images cost-effectively.
+Cloudinary is the active production media storage provider for the Namlatic Hotel Owner Portal, providing enterprise-grade asset management, global CDN image delivery, and signed backend operations without requiring cloud infrastructure credit cards on its free plan.
+
+#### A. Cloudinary Account Setup & Credential Retrieval
+1. Register for a free Cloudinary account at [https://cloudinary.com/users/register_free](https://cloudinary.com/users/register_free).
+2. Upon logging in, navigate to the **Cloudinary Console Dashboard** ([https://console.cloudinary.com/](https://console.cloudinary.com/)).
+3. Under **Product Environment Credentials**, locate the three required variables:
+   - **Cloud Name:** (e.g. `dxy123456`) $\to$ `CLOUDINARY_CLOUD_NAME`
+   - **API Key:** (e.g. `987654321098765`) $\to$ `CLOUDINARY_API_KEY`
+   - **API Secret:** Click the eye icon to reveal the secret string $\to$ `CLOUDINARY_API_SECRET`
+4. Set `MEDIA_STORAGE_DRIVER=cloudinary` in your Render backend environment variables.
+
+#### B. Backend-Only Credential Handling & Least-Privilege Policy
+- **Strict Isolation:** `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET` must **ONLY** be configured as environment variables in the Render backend web service.
+- **Client Zero-Trust:** These credentials must NEVER be placed in the React client code (`client/`), injected into Vercel build variables, or committed to Git.
+- **Signed Upload Architecture:** All media uploads originate server-side from Render using the official `cloudinary` Node.js SDK (`cloudinary.v2.uploader.upload`), ensuring client browsers never directly upload unvetted files to Cloudinary.
+- **Controlled Asset Deletion:** Deletions are signed backend requests (`cloudinary.v2.uploader.destroy`) triggered only after authenticated hotel deletions or replacement rollbacks.
+
+#### C. Free-Plan Usage Limitations & Capacity Guidance
+- **Generous Monthly Quota:** Cloudinary's free plan provides **25 monthly credits**.
+  - $1\text{ credit} = 1,000\text{ transformations}$, or $1\text{ GB of managed storage}$, or $1\text{ GB of net bandwidth}$.
+- **Storage & Bandwidth:** The quota supports up to $25\text{ GB}$ of stored images and $25\text{ GB}$ of monthly CDN delivery bandwidth—more than ample for standard hotel owner portfolio operations with zero recurring subscription costs.
+- **File Size Limit:** Cloudinary free tier supports single image uploads up to $10\text{ MB}$. Namlatic Hotel enforces an even stricter $5\text{ MB}$ limit with Sharp sanitization.
+- **Cost Safety Rule:** Do not upgrade or enable paid add-ons without explicit user approval.
+
+#### D. Mandatory Sharp Pre-Upload Sanitization Pipeline
+Cloudinary receives exclusively sanitized image files—never raw client uploads. The backend execution flow is:
+1. Multer receives multipart form upload and saves temporarily to `server/src/uploads/hotels/`.
+2. Binary magic bytes verified (JPEG, PNG, WebP).
+3. `sanitizeImage` runs `sharp` to strip all EXIF, GPS coordinates, device serials, and camera metadata.
+4. `CloudinaryStorageAdapter` uploads the sanitized file buffer to Cloudinary using an unpredictable server-generated UUID (`namlatic-hotel/hotels/<uuid>`).
+5. Staged local disk file is immediately unlinked upon upload success or failure.
+
+#### E. Production Deployment & Verification Checklist
+1. In the Render Dashboard under **Environment Variables**, configure:
+   - `MEDIA_STORAGE_DRIVER=cloudinary`
+   - `CLOUDINARY_CLOUD_NAME=<your-cloud-name>`
+   - `CLOUDINARY_API_KEY=<your-api-key>`
+   - `CLOUDINARY_API_SECRET=<your-api-secret>`
+2. Deploy the Render backend service.
+3. Open the Namlatic Hotel portal, log in, and create or update a hotel with a property photo.
+4. Verify the image appears in the hotel cards and hotel details page with a secure URL:
+   `https://res.cloudinary.com/<your-cloud-name>/image/upload/v.../namlatic-hotel/hotels/<uuid>`
+5. In Cloudinary Console > **Media Library**, verify that the image exists in the folder `namlatic-hotel/hotels/`.
+6. Delete the hotel property in the portal and confirm the asset is cleanly removed from the Cloudinary Media Library.
+
+---
+
+### 3.4 Target Service 4: Cloudflare R2 (Alternative / Legacy Object Storage Architecture)
+
+Cloudflare R2 provides S3-compatible object storage with **zero egress fees**, retained as an alternative supported production driver (`MEDIA_STORAGE_DRIVER=r2`).
 
 #### A. Bucket Access & Security Model
 - **Public Read Access:** The bucket has public object read access enabled via custom domain (`https://assets.namlatic.com`) or R2 managed subdomain (`https://pub-xxxxxxxx.r2.dev`). Anyone with the exact object key can retrieve the image file over HTTPS GET.
@@ -227,17 +280,9 @@ In Cloudflare Dashboard > R2 > Manage R2 API Tokens:
 - **TTL:** Unlimited or enterprise rotation schedule.
 - **Bucket Scope:** Restrict strictly to `namlatic-hotel-media`.
 
-#### C. Mandatory Sharp EXIF/GPS Metadata Sanitization Pipeline
-Before any photo is uploaded to R2, it passes through the image sanitization pipeline in `server/src/middleware/upload.middleware.js`:
-1. **Magic-Byte Signature Verification:** Verifies binary file headers for JPEG (`FF D8 FF`), PNG (`89 50 4E 47`), or WebP (`RIFF...WEBP`). Spoofed scripts are rejected immediately (HTTP 400).
-2. **Sharp EXIF Stripping:** Processes the image through `sharp.rotate()`, auto-orienting pixels according to camera rotation tags and stripping all EXIF, GPS, camera model, and personal metadata.
-3. **Format-Specific Re-encoding:** Re-encodes JPEG with MozJPEG ($85\%$ quality), PNG ($level=8$), and WebP ($85\%$ quality).
-4. **File Size Enforcement:** Maximum file size strictly enforced at $5\text{ MB}$ (`LIMIT_FILE_SIZE`).
-5. **Corrupt Image Protection:** If decoding fails on corrupt or truncated payloads, the temporary file is unlinked immediately and HTTP 400 is returned.
-
 ---
 
-### 3.4 Target Service 4: Vercel (Frontend & Same-Origin Proxy)
+### 3.5 Target Service 5: Vercel (Frontend & Same-Origin Proxy)
 
 Vercel hosts the React 18 / Vite Single Page Application on its global Edge Network and acts as the secure reverse proxy for backend API calls.
 
@@ -367,12 +412,17 @@ Expected output:
    - `NODE_ENV=production`
    - `DATABASE_URL=<neon-runtime-connection-string-for-namlatic_app>`
    - `BACKEND_PROXY_SECRET=<generate-32-char-random-secret>`
-   - `MEDIA_STORAGE_DRIVER=r2`
-   - `R2_ACCOUNT_ID=...`
-   - `R2_ACCESS_KEY_ID=...`
-   - `R2_SECRET_ACCESS_KEY=...`
-   - `R2_BUCKET_NAME=namlatic-hotel-media`
-   - `R2_PUBLIC_BASE_URL=...`
+   - `MEDIA_STORAGE_DRIVER=cloudinary` (or `r2`)
+   - If using Cloudinary:
+     * `CLOUDINARY_CLOUD_NAME=<your-cloud-name>`
+     * `CLOUDINARY_API_KEY=<your-api-key>`
+     * `CLOUDINARY_API_SECRET=<your-api-secret>`
+   - If using Cloudflare R2:
+     * `R2_ACCOUNT_ID=...`
+     * `R2_ACCESS_KEY_ID=...`
+     * `R2_SECRET_ACCESS_KEY=...`
+     * `R2_BUCKET_NAME=namlatic-hotel-media`
+     * `R2_PUBLIC_BASE_URL=...`
    - `CORS_ORIGIN=https://namlatic-hotel.vercel.app`
 6. Deploy the service and record the generated URL (e.g. `https://namlatic-hotel-backend.onrender.com`).
 
@@ -408,3 +458,4 @@ Expected output:
 | **Image Sanitization** | Mandatory Sharp EXIF/GPS stripping before PutObject | Storing raw client uploads directly in R2 | Prevents exfiltration of owner/guest GPS coordinates, device serial numbers, and metadata leakage to the public internet. |
 | **Reverse Proxy Topology** | Configurable `TRUST_PROXY` verified empirically via live request evidence | Hardcoded `trust proxy: 1` assumption | Multi-hop proxy chains (Vercel + Render) may require 2 hops; blind assumption could enable IP spoofing or break rate limiting. |
 | **Vercel / Render Tiers** | Documented Free/Hobby constraints with clear upgrade paths | Silently selecting paid plans or claiming free tier has 24/7 SLA | Adheres to cost safety, non-commercial Terms of Service compliance, and transparent operational uptime expectations. |
+| **Cloudinary Media Storage (Phase 5G-A)** | Cloudinary Node.js SDK signed uploads with unpredictable server-side UUIDs (`CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`) | Requiring payment cards or unsigned frontend uploads | Eliminates barrier to cloud deployment with generous 25-credit free tier. Signed server-side uploads prevent unauthorized client direct writes. Retains seamless fallback and compatibility with Cloudflare R2 and local filesystem. |

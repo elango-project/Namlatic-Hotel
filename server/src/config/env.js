@@ -420,13 +420,13 @@ function parseRateLimitConfig(rawEnv, nodeEnv) {
 
 /**
  * Parses and validates the media storage driver.
- * Supported values: 'local' | 'r2'
+ * Supported values: 'local' | 'r2' | 'cloudinary'
  * In development and test, defaults to 'local'.
- * In production, strictly requires 'r2' and rejects missing driver or 'local'.
+ * In production, strictly requires 'cloudinary' (or 'r2') and rejects missing driver or 'local'.
  *
  * @param {Record<string, string|undefined>} rawEnv
  * @param {string} nodeEnv
- * @returns {'local' | 'r2'}
+ * @returns {'local' | 'r2' | 'cloudinary'}
  */
 function parseMediaStorageDriver(rawEnv = process.env, nodeEnv = 'development') {
   const rawDriver = rawEnv.MEDIA_STORAGE_DRIVER;
@@ -435,7 +435,7 @@ function parseMediaStorageDriver(rawEnv = process.env, nodeEnv = 'development') 
   if (!rawDriver || rawDriver.trim() === '') {
     if (isProduction) {
       throw new Error(
-        'Missing MEDIA_STORAGE_DRIVER in production. Production requires "MEDIA_STORAGE_DRIVER=r2". Local disk storage is prohibited in production.'
+        'Missing MEDIA_STORAGE_DRIVER in production. Production requires "MEDIA_STORAGE_DRIVER=cloudinary" (or "MEDIA_STORAGE_DRIVER=r2"). Local disk storage is prohibited in production.'
       );
     }
     return 'local';
@@ -445,7 +445,7 @@ function parseMediaStorageDriver(rawEnv = process.env, nodeEnv = 'development') 
   if (normalized === 'local') {
     if (isProduction) {
       throw new Error(
-        'In production, MEDIA_STORAGE_DRIVER cannot be "local". Production requires durable cloud storage ("MEDIA_STORAGE_DRIVER=r2") because local container storage is ephemeral.'
+        'In production, MEDIA_STORAGE_DRIVER cannot be "local". Production requires durable cloud storage ("MEDIA_STORAGE_DRIVER=cloudinary" or "MEDIA_STORAGE_DRIVER=r2") because local container storage is ephemeral.'
       );
     }
     return 'local';
@@ -453,10 +453,61 @@ function parseMediaStorageDriver(rawEnv = process.env, nodeEnv = 'development') 
   if (normalized === 'r2') {
     return 'r2';
   }
+  if (normalized === 'cloudinary') {
+    return 'cloudinary';
+  }
 
   throw new Error(
-    `Invalid MEDIA_STORAGE_DRIVER: "${rawDriver}". Supported drivers are "local" and "r2".`
+    `Invalid MEDIA_STORAGE_DRIVER: "${rawDriver}". Supported drivers are "local", "r2", and "cloudinary".`
   );
+}
+
+/**
+ * Validates and normalizes Cloudinary object storage credentials and configuration.
+ * Fails fast with descriptive errors if any required variables are missing or invalid.
+ * Never leaks secret keys or access keys in error messages.
+ *
+ * @param {Record<string, string|undefined>} rawEnv
+ * @param {string} [nodeEnv]
+ * @returns {{ cloudName: string, apiKey: string, apiSecret: string, folder: string }}
+ */
+function parseCloudinaryConfig(rawEnv = process.env, nodeEnv = rawEnv.NODE_ENV || 'development') {
+  const cloudName = rawEnv.CLOUDINARY_CLOUD_NAME ? rawEnv.CLOUDINARY_CLOUD_NAME.trim() : '';
+  const apiKey = rawEnv.CLOUDINARY_API_KEY ? rawEnv.CLOUDINARY_API_KEY.trim() : '';
+  const apiSecret = rawEnv.CLOUDINARY_API_SECRET ? rawEnv.CLOUDINARY_API_SECRET.trim() : '';
+  const folder = rawEnv.CLOUDINARY_FOLDER ? rawEnv.CLOUDINARY_FOLDER.trim() : 'namlatic-hotel/hotels';
+
+  const missing = [];
+  if (!cloudName) missing.push('CLOUDINARY_CLOUD_NAME');
+  if (!apiKey) missing.push('CLOUDINARY_API_KEY');
+  if (!apiSecret) missing.push('CLOUDINARY_API_SECRET');
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Cloudinary configuration error: Missing required environment variable(s): ${missing.join(', ')}.`
+    );
+  }
+
+  // Security & syntax checks: Ensure cloud name contains only safe alphanumeric/hyphen/underscore characters
+  if (!/^[a-zA-Z0-9_-]+$/.test(cloudName)) {
+    throw new Error(
+      'Cloudinary configuration error: CLOUDINARY_CLOUD_NAME contains invalid characters. Only alphanumeric characters, hyphens, and underscores are allowed.'
+    );
+  }
+
+  // Ensure folder does not attempt directory traversal
+  if (folder.includes('..') || folder.startsWith('/') || folder.endsWith('/')) {
+    throw new Error(
+      'Cloudinary configuration error: CLOUDINARY_FOLDER cannot contain relative parent paths or leading/trailing slashes.'
+    );
+  }
+
+  return {
+    cloudName,
+    apiKey,
+    apiSecret,
+    folder,
+  };
 }
 
 /**
@@ -598,6 +649,7 @@ function parseAndValidateEnv(rawEnv = process.env) {
 
   const mediaStorageDriver = parseMediaStorageDriver(rawEnv, nodeEnv);
   const r2Config = mediaStorageDriver === 'r2' ? parseR2Config(rawEnv, nodeEnv) : null;
+  const cloudinaryConfig = mediaStorageDriver === 'cloudinary' ? parseCloudinaryConfig(rawEnv, nodeEnv) : null;
   const proxySecrets = parseProxySecrets(rawEnv, nodeEnv);
 
   return {
@@ -611,6 +663,7 @@ function parseAndValidateEnv(rawEnv = process.env) {
     bodyLimit,
     mediaStorageDriver,
     r2Config,
+    cloudinaryConfig,
     backendProxySecret: proxySecrets.backendProxySecret,
     backendProxySecretOld: proxySecrets.backendProxySecretOld,
     ...dbConfig,
@@ -623,6 +676,7 @@ function parseAndValidateEnv(rawEnv = process.env) {
     parseRateLimitConfig,
     parseMediaStorageDriver,
     parseR2Config,
+    parseCloudinaryConfig,
     parseProxySecrets,
     parseAndValidateEnv,
   };
