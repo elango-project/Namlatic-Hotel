@@ -9,6 +9,7 @@ import {
   setPageOffset,
   resetFilters,
   deleteHotel,
+  fetchHotelStats,
 } from '../features/hotels/hotelsSlice';
 import HotelCard from '../components/HotelCard';
 import HotelCardSkeleton from '../components/HotelCardSkeleton';
@@ -74,11 +75,19 @@ function MyHotelsPage() {
     dispatch(fetchHotels());
   };
 
-  // Delete flow
+  // Delete flow with confirmation and success feedback
   const handleDeleteConfirm = async () => {
     if (!hotelToDelete) return;
-    await dispatch(deleteHotel(hotelToDelete.id));
+    const deletedTitle = hotelToDelete.title;
+    const resultAction = await dispatch(deleteHotel(hotelToDelete.id));
     setHotelToDelete(null);
+    if (deleteHotel.fulfilled.match(resultAction)) {
+      setFlashMessage({
+        type: 'success',
+        message: `Property "${deletedTitle}" was deleted successfully.`,
+      });
+      dispatch(fetchHotelStats());
+    }
   };
 
   const isFiltered = Boolean(filters.title || filters.minPrice || filters.maxPrice);

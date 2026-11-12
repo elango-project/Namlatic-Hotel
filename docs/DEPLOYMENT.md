@@ -17,13 +17,14 @@ The Namlatic Hotel Owner Portal follows a decoupled, cloud-native **PERN** (Post
 |            │ 1. HTTPS Requests & __Host- Session Cookies                                                |
 |            ▼                                                                                            |
 |   ┌─────────────────────────────────────────────────────────────────┐                                   |
-|   │ Vercel Edge Network (Global CDN)                                │                                   |
-|   │ ─────────────────────────────────                               │                                   |
+|   │ Vercel Edge Network & Serverless Function Proxy                 │                                   |
+|   │ ───────────────────────────────────────────────────             │                                   |
 |   │ • Serves React 18 SPA static assets from client/dist            │                                   |
 |   │ • Enforces HSTS, CSP, nosniff, frameguard security headers      │                                   |
-|   │ • Routes /api/(.*) via Same-Origin API Proxy rewrite            │                                   |
-|   │ • Injects secret header: x-vercel-proxy-secret                  │                                   |
-|   │ • Bypasses rewrite caching: x-vercel-enable-rewrite-caching: 0  │                                   |
+|   │ • Routes /api/* via Serverless Function Proxy (client/api/)     │                                   |
+|   │ • Injects server-side secret header: x-vercel-proxy-secret      │                                   |
+|   │ • Streams multipart uploads directly without buffering          │                                   |
+|   │ • Enforces no-store caching: Cache-Control: private, no-store   │                                   |
 |   └────────────────────────────────┬────────────────────────────────┘                                   |
 |                                    │                                                                    |
 |                                    │ 2. Proxied HTTPS with Proxy Secret                                 |
@@ -292,12 +293,22 @@ Vercel hosts the React 18 / Vite Single Page Application on its global Edge Netw
 - **Evaluation / Demonstration:** For testing, candidate evaluation, portfolio demonstration, and personal development, the Hobby plan is fully compliant and functional.
 - **Cost Safety Rule:** Do not upgrade or purchase plans without explicit user approval.
 
-#### B. Same-Origin API Proxy Architecture (`client/vercel.json`)
+#### B. Same-Origin API Proxy Architecture (Vercel Serverless Function — `client/api/`)
+
 Browser requests are directed to `https://namlatic-hotel.vercel.app/api/...`:
-- Vercel routes `/api/(.*)` to `${BACKEND_ORIGIN}/api/$1`.
-- Vercel sets request header `x-vercel-proxy-secret` to `$BACKEND_PROXY_SECRET`.
-- Vercel disables rewrite caching via `x-vercel-enable-rewrite-caching: 0`.
-- Browser treats cookies (`__Host-namlatic_session`) as first-party, same-origin cookies with `SameSite=Lax`.
+- **Serverless Function Proxy (`client/api/[...path].js` & `client/api/index.js`):**
+  Vercel automatically routes all `/api/*` requests to the Node.js Serverless Function proxy handler (`client/api/proxyHandler.js`).
+- **Server-Side Environment Variables:**
+  - `BACKEND_ORIGIN`: Target Render backend service URL (e.g. `https://namlatic-hotel-backend.onrender.com`). Validated strictly as an HTTPS URL in production.
+  - `BACKEND_PROXY_SECRET`: Cryptographically random secret header injected server-side as `x-vercel-proxy-secret`. **Never bundled into client JavaScript or exposed to browsers.**
+- **Request Streaming & Multipart Preservation (`bodyParser: false`):**
+  Vercel function configuration disables automatic body parsing (`bodyParser: false`), allowing hotel photo upload streams (`multipart/form-data`) and JSON payloads to be piped directly into the upstream request to Render without memory buffering or parser errors.
+- **Session & Cookie Preservation:**
+  The proxy forwards backend status codes, response streams, and all `Set-Cookie` headers (`__Host-auth_token=...; Path=/; Secure; HttpOnly; SameSite=Lax`), guaranteeing full PostgreSQL-backed authentication session persistence. The browser treats authentication sessions as first-party, same-origin cookies with `SameSite=Lax`.
+- **Cache Prevention:**
+  API responses unconditionally carry `Cache-Control: private, no-store, no-cache, max-age=0, must-revalidate`.
+- **SPA Fallback Routing (`client/vercel.json`):**
+  Static non-API routes (e.g. `/`, `/hotels`, `/login`) fall back to `/index.html` to serve the React Single Page App, while `/api/*` is handled exclusively by the serverless function.
 
 #### C. Security Headers
 Configured in `client/vercel.json` for all routes:
@@ -459,3 +470,4 @@ Expected output:
 | **Reverse Proxy Topology** | Configurable `TRUST_PROXY` verified empirically via live request evidence | Hardcoded `trust proxy: 1` assumption | Multi-hop proxy chains (Vercel + Render) may require 2 hops; blind assumption could enable IP spoofing or break rate limiting. |
 | **Vercel / Render Tiers** | Documented Free/Hobby constraints with clear upgrade paths | Silently selecting paid plans or claiming free tier has 24/7 SLA | Adheres to cost safety, non-commercial Terms of Service compliance, and transparent operational uptime expectations. |
 | **Cloudinary Media Storage (Phase 5G-A)** | Cloudinary Node.js SDK signed uploads with unpredictable server-side UUIDs (`CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`) | Requiring payment cards or unsigned frontend uploads | Eliminates barrier to cloud deployment with generous 25-credit free tier. Signed server-side uploads prevent unauthorized client direct writes. Retains seamless fallback and compatibility with Cloudflare R2 and local filesystem. |
+| **Vercel API Proxy Architecture** | Node.js Serverless Function proxy (`client/api/proxyHandler.js`) with server-side `BACKEND_PROXY_SECRET` injection and raw streaming (`bodyParser: false`) | Static `vercel.json` rewrite rules with runtime env interpolation `${BACKEND_ORIGIN}` | Static `vercel.json` rewrites cannot interpolate environment variables at runtime and lack server-side secret header injection capabilities, causing silent fallback to `index.html`. Serverless function guarantees reliable HTTPS proxying, secret isolation, and streaming integrity. |

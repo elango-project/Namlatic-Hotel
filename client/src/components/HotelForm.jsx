@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { getImageUrl } from '../services/api';
+import { APP_CURRENCY, APP_CURRENCY_SYMBOL } from '../config/currency';
 
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5 MB
 const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -527,9 +528,12 @@ function HotelForm({
       {/* Field: Price */}
       <div className={`form-group ${errors.price ? 'has-error' : ''}`}>
         <label htmlFor="hotel-price" className="form-label">
-          Price <span className="required-star" aria-hidden="true">*</span>
+          Price {APP_CURRENCY ? `(${APP_CURRENCY})` : ''} <span className="required-star" aria-hidden="true">*</span>
         </label>
-        <div className="price-input-wrapper">
+        <div className={APP_CURRENCY_SYMBOL ? 'input-with-prefix' : 'price-input-wrapper'}>
+          {APP_CURRENCY_SYMBOL && (
+            <span className="input-prefix" aria-hidden="true">{APP_CURRENCY_SYMBOL}</span>
+          )}
           <input
             ref={fieldRefs.price}
             id="hotel-price"
@@ -553,7 +557,9 @@ function HotelForm({
             {errors.price}
           </span>
         ) : (
-          <span id="price-hint" className="form-hint">Listed price for the property (positive number, maximum 2 decimal places).</span>
+          <span id="price-hint" className="form-hint">
+            Listed price per night for the property in {APP_CURRENCY || 'portfolio operational currency'} (positive number, maximum 2 decimal places).
+          </span>
         )}
       </div>
 

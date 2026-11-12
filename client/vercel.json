@@ -1,27 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "${BACKEND_ORIGIN}/api/$1",
-      "env": ["BACKEND_ORIGIN"],
-      "headers": {
-        "Cache-Control": "private, no-store, no-cache, max-age=0, must-revalidate"
-      },
-      "transforms": [
-        {
-          "type": "request.headers",
-          "op": "set",
-          "target": {
-            "key": "x-vercel-proxy-secret"
-          },
-          "args": "$BACKEND_PROXY_SECRET",
-          "env": ["BACKEND_PROXY_SECRET"]
-        }
-      ]
-    }
-  ],
   "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api/:path*"
+    },
     {
       "source": "/(.*)",
       "destination": "/index.html"
@@ -31,10 +14,6 @@
     {
       "source": "/api/:path*",
       "headers": [
-        {
-          "key": "x-vercel-enable-rewrite-caching",
-          "value": "0"
-        },
         {
           "key": "Cache-Control",
           "value": "private, no-store, no-cache, max-age=0, must-revalidate"
