@@ -50,11 +50,18 @@ describe('Unit Tests: Express Backend Hardening Configuration (Phase 5C)', () =>
   // 2. CORS Origin Allowlist Parsing
   // --------------------------------------------------------------------------
   describe('CORS Origin Allowlist', () => {
-    it('defaults to localhost development origins when CORS_ORIGIN is unset in development', () => {
+    it('defaults to production and localhost development origins when CORS_ORIGIN is unset in development', () => {
       const origins = parseCorsOrigins(undefined, 'development');
+      assert.equal(origins.includes('https://namlatic-hotel.vercel.app'), true);
       assert.equal(origins.includes('http://localhost:5173'), true);
       assert.equal(origins.includes('http://127.0.0.1:5173'), true);
       assert.equal(origins.includes('http://localhost:4173'), true);
+    });
+
+    it('defaults to production and localhost development origins when CORS_ORIGIN is unset in production', () => {
+      const origins = parseCorsOrigins(undefined, 'production');
+      assert.equal(origins.includes('https://namlatic-hotel.vercel.app'), true);
+      assert.equal(origins.includes('http://localhost:5173'), true);
     });
 
     it('parses a single production origin correctly', () => {
@@ -69,6 +76,12 @@ describe('Unit Tests: Express Backend Hardening Configuration (Phase 5C)', () =>
       assert.equal(origins.includes('https://namlatic-hotel.vercel.app'), true);
       assert.equal(origins.includes('https://preview-123.vercel.app'), true);
       assert.equal(origins.includes('http://localhost:5173'), true);
+    });
+
+    it('automatically includes production origin https://namlatic-hotel.vercel.app when custom origin is configured', () => {
+      const origins = parseCorsOrigins('https://preview-deploy.vercel.app', 'production');
+      assert.equal(origins.includes('https://namlatic-hotel.vercel.app'), true);
+      assert.equal(origins.includes('https://preview-deploy.vercel.app'), true);
     });
 
     it('strictly forbids wildcard (*) in production mode', () => {

@@ -31,7 +31,7 @@ services:
       - key: DATABASE_URL
         sync: false # Runtime application connection (namlatic_app restricted role)
       - key: CORS_ORIGIN
-        sync: false
+        value: https://namlatic-hotel.vercel.app
       - key: BACKEND_PROXY_SECRET
         sync: false
       - key: R2_ACCOUNT_ID

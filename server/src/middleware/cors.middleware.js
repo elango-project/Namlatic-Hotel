@@ -18,7 +18,8 @@ function createCorsOptions(allowedOrigins = []) {
         return callback(null, true);
       }
 
-      if (allowedOrigins.includes(origin)) {
+      const normalizedOrigin = typeof origin === 'string' ? origin.replace(/\/+$/, '') : origin;
+      if (allowedOrigins.includes(origin) || allowedOrigins.includes(normalizedOrigin)) {
         return callback(null, true);
       }
 

@@ -318,6 +318,7 @@ function validateMigrationDatabaseConfig(rawEnv = process.env, options = {}) {
  * @returns {string[]} Normalized list of allowed origins
  */
 function parseCorsOrigins(rawOriginStr, nodeEnv = 'development') {
+  const defaultProductionOrigin = 'https://namlatic-hotel.vercel.app';
   const defaultLocalOrigins = [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
@@ -325,8 +326,13 @@ function parseCorsOrigins(rawOriginStr, nodeEnv = 'development') {
     'http://127.0.0.1:4173',
   ];
 
+  const defaultAllowedOrigins = [
+    defaultProductionOrigin,
+    ...defaultLocalOrigins,
+  ];
+
   if (!rawOriginStr || typeof rawOriginStr !== 'string' || rawOriginStr.trim() === '') {
-    return defaultLocalOrigins;
+    return defaultAllowedOrigins;
   }
 
   const origins = rawOriginStr
@@ -335,7 +341,7 @@ function parseCorsOrigins(rawOriginStr, nodeEnv = 'development') {
     .filter(Boolean);
 
   if (origins.length === 0) {
-    return defaultLocalOrigins;
+    return defaultAllowedOrigins;
   }
 
   for (const origin of origins) {
@@ -359,6 +365,11 @@ function parseCorsOrigins(rawOriginStr, nodeEnv = 'development') {
     }
   }
 
+  // Always ensure the authorized production frontend origin is in the allowlist
+  if (!origins.includes(defaultProductionOrigin)) {
+    origins.unshift(defaultProductionOrigin);
+  }
+
   // In development, preserve standard localhost origins alongside custom configured ones
   if (nodeEnv === 'development') {
     for (const localOrigin of defaultLocalOrigins) {
@@ -368,7 +379,7 @@ function parseCorsOrigins(rawOriginStr, nodeEnv = 'development') {
     }
   }
 
-  return origins;
+  return [...new Set(origins)];
 }
 
 /**
@@ -638,7 +649,7 @@ function parseAndValidateEnv(rawEnv = process.env) {
   const nodeEnv = rawEnv.NODE_ENV || 'development';
   const port = parseInt(rawEnv.PORT, 10) || 5000;
   const host = rawEnv.HOST || '0.0.0.0';
-  const corsOrigin = rawEnv.CORS_ORIGIN || 'http://localhost:5173';
+  const corsOrigin = rawEnv.CORS_ORIGIN || (nodeEnv === 'production' ? 'https://namlatic-hotel.vercel.app' : 'http://localhost:5173');
   const corsOrigins = parseCorsOrigins(rawEnv.CORS_ORIGIN, nodeEnv);
   const trustProxy = parseTrustProxy(rawEnv.TRUST_PROXY, nodeEnv);
   const rateLimit = parseRateLimitConfig(rawEnv, nodeEnv);
