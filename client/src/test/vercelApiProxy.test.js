@@ -239,6 +239,11 @@ describe('Vercel Serverless API Proxy (client/api/)', () => {
       expect(resolveTargetPath(null)).toBe('/api');
       expect(resolveTargetPath('/', { path: ['health'] })).toBe('/api/health');
       expect(resolveTargetPath('/', { path: ['hotels', '99'] })).toBe('/api/hotels/99');
+      expect(resolveTargetPath('/api/index.js?__path=health')).toBe('/api/health');
+      expect(resolveTargetPath('/api/index.js?__path=hotels&title=grand')).toBe(
+        '/api/hotels?title=grand'
+      );
+      expect(resolveTargetPath('/api/index.js')).toBe('/api');
     });
   });
 

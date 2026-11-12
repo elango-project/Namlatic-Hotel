@@ -65,36 +65,60 @@ export function validateBackendOrigin(
 
 /**
  * Normalizes incoming request paths to ensure they target the backend /api prefix.
- * Preserves query parameters and subpaths reliably regardless of how Vercel routes the function.
+ * Handles path reconstruction whether routed directly, via catch-all rewrites (__path query),
+ * or dynamic router conventions.
+ * Preserves query parameters and subpaths reliably.
  *
  * @param {string} [reqUrl='/api']
  * @param {object} [reqQuery={}]
  * @returns {string} Normalized path with query (e.g. '/api/hotels?minPrice=100')
  */
 export function resolveTargetPath(reqUrl = '/api', reqQuery = {}) {
-  let pathWithQuery = (reqUrl || '').trim();
+  let rawUrl = (reqUrl || '').trim();
+  if (!rawUrl) rawUrl = '/api';
+  if (!rawUrl.startsWith('/')) rawUrl = '/' + rawUrl;
 
-  // If reqUrl was stripped or empty, reconstruct from query.path if present
-  if (!pathWithQuery || pathWithQuery === '/') {
+  const dummyOrigin = 'http://localhost';
+  let parsed;
+  try {
+    parsed = new URL(rawUrl, dummyOrigin);
+  } catch (_e) {
+    parsed = new URL('/api', dummyOrigin);
+  }
+
+  const searchParams = new URLSearchParams(parsed.search);
+
+  // Extract subpath from __path or path query parameters (from Vercel rewrites or Next-style query)
+  let subPath = '';
+  if (searchParams.has('__path')) {
+    subPath = searchParams.get('__path') || '';
+    searchParams.delete('__path');
+  } else if (reqQuery && reqQuery.__path) {
+    subPath = reqQuery.__path;
+  } else if (reqQuery && reqQuery.path) {
     if (Array.isArray(reqQuery.path)) {
-      pathWithQuery = `/api/${reqQuery.path.join('/')}`;
+      subPath = reqQuery.path.join('/');
     } else if (typeof reqQuery.path === 'string') {
-      pathWithQuery = `/api/${reqQuery.path}`;
-    } else {
-      pathWithQuery = '/api';
+      subPath = reqQuery.path;
     }
   }
 
-  if (!pathWithQuery.startsWith('/')) {
-    pathWithQuery = '/' + pathWithQuery;
+  const basePath = parsed.pathname;
+  let targetPath;
+
+  if (subPath) {
+    const cleanSubPath = subPath.startsWith('/') ? subPath : `/${subPath}`;
+    targetPath = `/api${cleanSubPath}`;
+  } else if (basePath === '/api/index.js' || basePath === '/api/index') {
+    targetPath = '/api';
+  } else if (basePath.startsWith('/api/') || basePath === '/api') {
+    targetPath = basePath;
+  } else {
+    targetPath = basePath === '/' ? '/api' : `/api${basePath}`;
   }
 
-  // Ensure path starts with /api
-  if (!pathWithQuery.startsWith('/api/') && pathWithQuery !== '/api') {
-    pathWithQuery = `/api${pathWithQuery}`;
-  }
-
-  return pathWithQuery;
+  const qs = searchParams.toString();
+  return qs ? `${targetPath}?${qs}` : targetPath;
 }
 
 /**

@@ -33,15 +33,16 @@ describe('Vercel Configuration & Frontend Deployment Readiness (Phase 5E)', () =
     expect(config.$schema).toBe('https://openapi.vercel.sh/vercel.json');
   });
 
-  it('4. configures Vite SPA route fallback rewrite (/(.*) -> /index.html)', () => {
+  it('4. configures Vite SPA route fallback rewrite for non-API routes', () => {
     const config = JSON.parse(fs.readFileSync(vercelJsonPath, 'utf-8'));
     expect(Array.isArray(config.rewrites)).toBe(true);
     expect(config.rewrites.length).toBeGreaterThanOrEqual(1);
 
     const spaRewrite = config.rewrites.find(
-      (r) => r.source === '/(.*)' && r.destination === '/index.html'
+      (r) => r.destination === '/index.html'
     );
     expect(spaRewrite).toBeDefined();
+    expect(spaRewrite.source).toMatch(/api/);
   });
 
   it('5. configures baseline security headers for all routes (/(.*))', () => {
