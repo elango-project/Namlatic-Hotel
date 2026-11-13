@@ -25,7 +25,7 @@ services:
       - key: TRUST_PROXY
         value: "1"
       - key: MEDIA_STORAGE_DRIVER
-        value: r2
+        value: cloudinary
       # The following sensitive credentials are set in the Render Dashboard
       # and marked sync: false to prevent leaking secrets in Git:
       - key: DATABASE_URL
@@ -34,13 +34,11 @@ services:
         value: https://namlatic-hotel.vercel.app
       - key: BACKEND_PROXY_SECRET
         sync: false
-      - key: R2_ACCOUNT_ID
+      - key: CLOUDINARY_CLOUD_NAME
         sync: false
-      - key: R2_ACCESS_KEY_ID
+      - key: CLOUDINARY_API_KEY
         sync: false
-      - key: R2_SECRET_ACCESS_KEY
+      - key: CLOUDINARY_API_SECRET
         sync: false
-      - key: R2_BUCKET_NAME
-        value: namlatic-hotel-media
-      - key: R2_PUBLIC_BASE_URL
-        sync: false
+      - key: CLOUDINARY_FOLDER
+        value: namlatic-hotel/hotels
