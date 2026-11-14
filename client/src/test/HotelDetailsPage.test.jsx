@@ -32,7 +32,13 @@ vi.mock('../components/HotelLocationMap', () => ({
       Map for {title} ({latitude}, {longitude})
     </div>
   ),
-  isValidCoordinate: (lat, lng) => lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180,
+  parseCoordinate: (val) => {
+    if (val === null || val === undefined) return NaN;
+    if (typeof val === 'string' && val.trim() === '') return NaN;
+    const num = typeof val === 'number' ? val : Number(val);
+    return Number.isFinite(num) ? num : NaN;
+  },
+  isValidCoordinate: (lat, lng) => typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180,
 }));
 
 const createMockStore = (initialCustomState = {}) => {
@@ -471,6 +477,122 @@ describe('HotelDetailsPage Component (Phase 4C)', () => {
       expect(map2).toHaveAttribute('data-lat', '46.519962');
       expect(map2).toHaveAttribute('data-lng', '6.633597');
       expect(map2).toHaveAttribute('data-title', 'Alpine Lodge 72');
+    });
+
+    it('handles zero coordinates ("0", "0") as valid coordinates and displays 0.0000°, 0.0000°', async () => {
+      const zeroCoordHotel = {
+        ...mockHotelData,
+        latitude: '0',
+        longitude: '0',
+      };
+      hotelApi.getHotelById.mockResolvedValueOnce({ data: zeroCoordHotel });
+
+      renderDetailsPage('/hotels/71');
+
+      await waitFor(() => {
+        expect(screen.getByTestId('hotel-details-content')).toBeInTheDocument();
+      });
+
+      expect(screen.getAllByText(/0\.0000°, 0\.0000°/)[0]).toBeInTheDocument();
+      const map = screen.getByTestId('mock-hotel-location-map');
+      expect(map).toHaveAttribute('data-lat', '0');
+      expect(map).toHaveAttribute('data-lng', '0');
+    });
+
+    it('displays "Coordinates unavailable" when latitude and longitude are null or empty', async () => {
+      const nullCoordHotel = {
+        ...mockHotelData,
+        latitude: null,
+        longitude: null,
+      };
+      hotelApi.getHotelById.mockResolvedValueOnce({ data: nullCoordHotel });
+
+      renderDetailsPage('/hotels/71');
+
+      await waitFor(() => {
+        expect(screen.getByTestId('hotel-details-content')).toBeInTheDocument();
+      });
+
+      expect(screen.getByText('Coordinates unavailable')).toBeInTheDocument();
+      expect(screen.getByText('No geographic coordinates provided')).toBeInTheDocument();
+      // Pill should not be rendered
+      expect(screen.queryByTitle('Geographic WGS 84 Coordinates')).not.toBeInTheDocument();
+    });
+
+    it('displays "Coordinates unavailable" when coordinates exceed valid bounds (e.g. 120, 250)', async () => {
+      const outOfBoundsHotel = {
+        ...mockHotelData,
+        latitude: '120.0000',
+        longitude: '250.0000',
+      };
+      hotelApi.getHotelById.mockResolvedValueOnce({ data: outOfBoundsHotel });
+
+      renderDetailsPage('/hotels/71');
+
+      await waitFor(() => {
+        expect(screen.getByTestId('hotel-details-content')).toBeInTheDocument();
+      });
+
+      expect(screen.getByText('Coordinates unavailable')).toBeInTheDocument();
+      expect(screen.getByText('No geographic coordinates provided')).toBeInTheDocument();
+    });
+
+    it('resets image error state when navigating to a new hotel ID', async () => {
+      const hotel1 = { ...mockHotelData, id: 71, title: 'Hotel Broken Image', image_path: '/uploads/broken.webp' };
+      const hotel2 = { ...mockHotelData, id: 72, title: 'Hotel Working Image', image_path: '/uploads/working.webp' };
+
+      hotelApi.getHotelById.mockImplementation((id) => {
+        if (id === '71') return Promise.resolve({ data: hotel1 });
+        if (id === '72') return Promise.resolve({ data: hotel2 });
+        return Promise.reject(new Error('Not found'));
+      });
+
+      const store = createMockStore();
+
+      function SwitchButton() {
+        const navigate = useNavigate();
+        return (
+          <button data-testid="switch-btn" onClick={() => navigate('/hotels/72')}>
+            Go to 72
+          </button>
+        );
+      }
+
+      render(
+        <Provider store={store}>
+          <HelmetProvider>
+            <MemoryRouter initialEntries={['/hotels/71']}>
+              <SwitchButton />
+              <Routes>
+                <Route path="/hotels/:id" element={<HotelDetailsPage />} />
+              </Routes>
+            </MemoryRouter>
+          </HelmetProvider>
+        </Provider>
+      );
+
+      // Verify hotel 1 loaded
+      await waitFor(() => {
+        expect(screen.getByRole('heading', { level: 1, name: 'Hotel Broken Image' })).toBeInTheDocument();
+      });
+
+      // Simulate broken image
+      const img1 = screen.getByRole('img', { name: /Exterior view of Hotel Broken Image/i });
+      fireEvent.error(img1);
+      expect(screen.getByTestId('details-no-image')).toBeInTheDocument();
+
+      // Navigate to hotel 2
+      fireEvent.click(screen.getByTestId('switch-btn'));
+
+      // Hotel 2 loads and imageError is reset, displaying hotel 2 image
+      await waitFor(() => {
+        expect(screen.getByRole('heading', { level: 1, name: 'Hotel Working Image' })).toBeInTheDocument();
+      });
+
+      const img2 = screen.getByRole('img', { name: /Exterior view of Hotel Working Image/i });
+      expect(img2).toBeInTheDocument();
+      expect(img2).toHaveAttribute('src', 'http://localhost:5000/uploads/working.webp');
+      expect(screen.queryByTestId('details-no-image')).not.toBeInTheDocument();
     });
   });
 

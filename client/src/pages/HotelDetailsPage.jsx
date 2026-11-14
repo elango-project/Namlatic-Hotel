@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { Helmet } from 'react-helmet-async';
 import { fetchHotelById, clearCurrentHotel } from '../features/hotels/hotelsSlice';
-import HotelLocationMap from '../components/HotelLocationMap';
+import HotelLocationMap, { parseCoordinate, isValidCoordinate } from '../components/HotelLocationMap';
 import ErrorAlert from '../components/ErrorAlert';
 import { getImageUrl } from '../services/api';
 import { formatCurrency } from '../config/currency';
@@ -53,8 +53,13 @@ export const isValidRouteId = (id) => {
 
 /**
  * HotelDetailsPage component.
- * Displays comprehensive property metadata, hero image, price, timestamps,
- * and an interactive Leaflet location map.
+ * Production-quality detail page implementing strict information hierarchy:
+ * 1. Hotel Image (Hero banner with verified fallback)
+ * 2. Hotel Title (Prominent h1 heading with action toolbar)
+ * 3. Hotel Price (Centralized currency formatting)
+ * 4. Full Hotel Description (Untruncated, pre-line)
+ * 5. Latitude & Longitude (WGS 84 geolocation facts)
+ * 6. Interactive Leaflet Map (Pinpoint coordinates with bounds validation)
  */
 function HotelDetailsPage() {
   const { id } = useParams();
@@ -68,8 +73,10 @@ function HotelDetailsPage() {
   const [imageError, setImageError] = useState(false);
   const [idValidationError, setIdValidationError] = useState(null);
 
-  // Validate ID parameter and fetch hotel data
+  // Validate ID parameter and fetch hotel data; reset state and clear stale data on route change
   useEffect(() => {
+    setImageError(false);
+
     if (!isValidRouteId(id)) {
       setIdValidationError(
         'Invalid hotel ID parameter. ID must be a positive integer within PostgreSQL BIGINT range (1 to 9223372036854775807).'
@@ -94,10 +101,10 @@ function HotelDetailsPage() {
   // Hero image resolution
   const imageUrl = currentHotel?.image_path ? getImageUrl(currentHotel.image_path) : null;
 
-  // Safe coordinate conversion for badges
-  const latNum = currentHotel?.latitude != null ? Number(currentHotel.latitude) : NaN;
-  const lngNum = currentHotel?.longitude != null ? Number(currentHotel.longitude) : NaN;
-  const hasValidCoords = Number.isFinite(latNum) && Number.isFinite(lngNum);
+  // Safe coordinate parsing and bounds validation (-90/90 lat, -180/180 lng)
+  const latNum = parseCoordinate(currentHotel?.latitude);
+  const lngNum = parseCoordinate(currentHotel?.longitude);
+  const hasValidCoords = isValidCoordinate(latNum, lngNum);
 
   // Formatted timestamps (rendered only if backend returned them)
   const createdAtFormatted = formatDateTime(currentHotel?.created_at);
@@ -109,12 +116,12 @@ function HotelDetailsPage() {
       <Helmet>
         {currentHotel ? (
           <>
-            <title>{`${currentHotel.title} | Namlatic Hotel Portal`}</title>
+            <title>{`${currentHotel.title || 'Hotel Property'} | Namlatic Hotel Portal`}</title>
             <meta
               name="description"
               content={
-                currentHotel.description
-                  ? currentHotel.description.slice(0, 155) + (currentHotel.description.length > 155 ? '...' : '')
+                currentHotel.description?.trim()
+                  ? currentHotel.description.trim().slice(0, 155) + (currentHotel.description.trim().length > 155 ? '...' : '')
                   : 'Hotel inventory details and location map.'
               }
             />
@@ -123,6 +130,11 @@ function HotelDetailsPage() {
           <>
             <title>Hotel Not Found | Namlatic Hotel Portal</title>
             <meta name="description" content="The requested hotel property was not found in the portfolio." />
+          </>
+        ) : idValidationError ? (
+          <>
+            <title>Invalid Hotel ID | Namlatic Hotel Portal</title>
+            <meta name="description" content="The specified hotel ID parameter is invalid." />
           </>
         ) : (
           <>
@@ -164,7 +176,7 @@ function HotelDetailsPage() {
         </div>
       )}
 
-      {/* State 2: Loading Skeleton / Spinner */}
+      {/* State 2: Loading State */}
       {!idValidationError && currentHotelStatus === 'loading' && (
         <div className="details-loading-card" data-testid="hotel-details-loading">
           <div className="spinner-lg" aria-hidden="true" />
@@ -209,58 +221,12 @@ function HotelDetailsPage() {
       {/* State 5: Success State */}
       {!idValidationError && currentHotelStatus === 'succeeded' && currentHotel && (
         <article className="hotel-details-article" data-testid="hotel-details-content">
-          {/* Top Header & Action Toolbar */}
-          <header className="details-header">
-            <div className="details-header-info">
-              <h1 className="details-title">{currentHotel.title}</h1>
-              {hasValidCoords && (
-                <div className="details-coords-pill" title="Geographic WGS 84 Coordinates">
-                  <svg className="coord-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <path
-                      fillRule="evenodd"
-                      d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  <span>
-                    {latNum.toFixed(4)}°, {lngNum.toFixed(4)}°
-                  </span>
-                </div>
-              )}
-            </div>
-
-            <div className="details-actions">
-              <Link
-                to={`/hotels/${id}/edit`}
-                className="btn btn-primary"
-                aria-label={`Edit ${currentHotel.title}`}
-              >
-                <svg className="btn-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                  />
-                </svg>
-                <span>Edit Hotel</span>
-              </Link>
-              <Link
-                to="/hotels"
-                className="btn btn-outline"
-                aria-label="Back to hotel listing"
-              >
-                ← Back to My Hotels
-              </Link>
-            </div>
-          </header>
-
-          {/* Hero Media Container */}
+          {/* 1. Hotel Image (Hero Media Container) */}
           <div className="details-hero-section">
             {imageUrl && !imageError ? (
               <img
                 src={imageUrl}
-                alt={`Exterior view of ${currentHotel.title}`}
+                alt={`Exterior view of ${currentHotel.title || 'hotel property'}`}
                 className="details-hero-image"
                 onError={() => setImageError(true)}
               />
@@ -290,22 +256,70 @@ function HotelDetailsPage() {
             )}
           </div>
 
-          {/* Key Facts Summary Cards */}
+          {/* 2. Hotel Title & Action Toolbar */}
+          <header className="details-header">
+            <div className="details-header-info">
+              <h1 className="details-title">{currentHotel.title}</h1>
+              {hasValidCoords && (
+                <div className="details-coords-pill" title="Geographic WGS 84 Coordinates">
+                  <svg className="coord-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path
+                      fillRule="evenodd"
+                      d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                  <span>
+                    {latNum.toFixed(4)}°, {lngNum.toFixed(4)}°
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="details-actions">
+              <Link
+                to={`/hotels/${id}/edit`}
+                className="btn btn-primary"
+                aria-label={`Edit ${currentHotel.title}`}
+              >
+                <svg className="btn-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                  />
+                </svg>
+                <span>Edit Hotel</span>
+              </Link>
+              <Link
+                to="/hotels"
+                className="btn btn-outline"
+                aria-label="Back to hotel listing"
+              >
+                ← Back to My Hotels
+              </Link>
+            </div>
+          </header>
+
+          {/* 3. Price & Geolocation Facts Summary Cards */}
           <div className="details-facts-grid">
             <div className="details-fact-card">
               <span className="fact-label">Price</span>
               <div className="fact-value price-value">
                 {formatCurrency(currentHotel.price)}
               </div>
-              <span className="fact-caption">Listed price</span>
+              <span className="fact-caption">Portfolio rate</span>
             </div>
 
             <div className="details-fact-card">
               <span className="fact-label">Coordinates</span>
-              <div className="fact-value">
-                {hasValidCoords ? `${latNum.toFixed(4)}°, ${lngNum.toFixed(4)}°` : 'Invalid'}
+              <div className={`fact-value ${!hasValidCoords ? 'fact-value-muted' : ''}`}>
+                {hasValidCoords ? `${latNum.toFixed(4)}°, ${lngNum.toFixed(4)}°` : 'Coordinates unavailable'}
               </div>
-              <span className="fact-caption">WGS 84 Geolocation</span>
+              <span className="fact-caption">
+                {hasValidCoords ? 'WGS 84 Geolocation' : 'No geographic coordinates provided'}
+              </span>
             </div>
 
             {/* Timestamps (rendered only if present from database) */}
@@ -328,17 +342,19 @@ function HotelDetailsPage() {
             )}
           </div>
 
-          {/* Full Description Section */}
+          {/* 4. Full Description Section */}
           <section className="details-section" aria-labelledby="desc-heading">
             <h2 id="desc-heading" className="section-title">
               About this Property
             </h2>
             <div className="details-description-box">
-              <p className="details-description-text">{currentHotel.description}</p>
+              <p className="details-description-text">
+                {currentHotel.description?.trim() || 'No description provided for this hotel property.'}
+              </p>
             </div>
           </section>
 
-          {/* Location & Map Section */}
+          {/* 5. Location & Map Section */}
           <section className="details-section" aria-labelledby="map-heading">
             <div className="section-header-row">
               <div>

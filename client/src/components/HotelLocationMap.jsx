@@ -21,11 +21,7 @@ const hotelMarkerIcon = L.icon({
 
 /**
  * Synchronizes the Leaflet map center and zoom when coordinates change.
- * In React Leaflet, MapContainer initialization props (center, zoom) are immutable
- * after initial creation. This controller child component accepts primitive numeric
- * props (latitude, longitude, zoom). By avoiding array references in the useEffect
- * dependency list, it prevents unnecessary re-centering or resetting of manual zoom/pan
- * during unrelated parent re-renders.
+ * Invalidate size ensures tiles render completely after async component mounts or route navigation.
  *
  * @param {object} props
  * @param {number} props.latitude
@@ -36,16 +32,35 @@ export function MapViewController({ latitude, longitude, zoom = 14 }) {
   const map = useMap();
 
   useEffect(() => {
-    if (
-      Number.isFinite(latitude) &&
-      Number.isFinite(longitude)
-    ) {
+    if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
       map.setView([latitude, longitude], zoom);
+      const timer = setTimeout(() => {
+        try {
+          map.invalidateSize();
+        } catch {
+          // ignore if container unmounted
+        }
+      }, 100);
+      return () => clearTimeout(timer);
     }
   }, [latitude, longitude, zoom, map]);
 
   return null;
 }
+
+/**
+ * Safely parses a coordinate value without converting null, undefined, or empty strings to zero.
+ * Preserves actual zero numbers (0, "0", "0.0") while returning NaN for missing/invalid input.
+ *
+ * @param {any} val
+ * @returns {number}
+ */
+export const parseCoordinate = (val) => {
+  if (val === null || val === undefined) return NaN;
+  if (typeof val === 'string' && val.trim() === '') return NaN;
+  const num = typeof val === 'number' ? val : Number(val);
+  return Number.isFinite(num) ? num : NaN;
+};
 
 /**
  * Validates geographic coordinate values.
@@ -58,6 +73,8 @@ export function MapViewController({ latitude, longitude, zoom = 14 }) {
  */
 export const isValidCoordinate = (lat, lng) => {
   return (
+    typeof lat === 'number' &&
+    typeof lng === 'number' &&
     Number.isFinite(lat) &&
     Number.isFinite(lng) &&
     !isNaN(lat) &&
@@ -73,13 +90,13 @@ export const isValidCoordinate = (lat, lng) => {
  * Interactive Leaflet Map displaying property location pin and popup.
  *
  * @param {object} props
- * @param {string|number} props.latitude - Raw coordinate (numeric or string from PostgreSQL)
- * @param {string|number} props.longitude - Raw coordinate (numeric or string from PostgreSQL)
+ * @param {string|number|null} props.latitude - Raw coordinate (numeric or string from PostgreSQL)
+ * @param {string|number|null} props.longitude - Raw coordinate (numeric or string from PostgreSQL)
  * @param {string} props.title - Property title for marker popup
  */
 function HotelLocationMap({ latitude, longitude, title = 'Hotel Property' }) {
-  const latNum = typeof latitude === 'number' ? latitude : Number(latitude);
-  const lngNum = typeof longitude === 'number' ? longitude : Number(longitude);
+  const latNum = parseCoordinate(latitude);
+  const lngNum = parseCoordinate(longitude);
 
   const valid = isValidCoordinate(latNum, lngNum);
 

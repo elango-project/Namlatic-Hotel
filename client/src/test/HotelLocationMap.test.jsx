@@ -1,12 +1,13 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import HotelLocationMap, { isValidCoordinate, MapViewController } from '../components/HotelLocationMap';
+import HotelLocationMap, { isValidCoordinate, parseCoordinate, MapViewController } from '../components/HotelLocationMap';
 
 const mockSetView = vi.fn();
 const mockMap = {
   setView: mockSetView,
   getZoom: () => 14,
+  invalidateSize: vi.fn(),
 };
 
 // Mock react-leaflet components and hooks for jsdom testing
@@ -45,6 +46,35 @@ vi.mock('leaflet/dist/images/marker-shadow.png', () => ({ default: 'marker-shado
 describe('HotelLocationMap Component & Coordinates Validation (Phase 4C)', () => {
   beforeEach(() => {
     mockSetView.mockClear();
+  });
+
+  describe('parseCoordinate helper', () => {
+    it('accurately preserves numeric zero and string zero as 0', () => {
+      expect(parseCoordinate(0)).toBe(0);
+      expect(parseCoordinate('0')).toBe(0);
+      expect(parseCoordinate('0.0')).toBe(0);
+      expect(parseCoordinate(0.0)).toBe(0);
+    });
+
+    it('accurately parses standard numbers and string representations', () => {
+      expect(parseCoordinate(24.453884)).toBe(24.453884);
+      expect(parseCoordinate('24.453884')).toBe(24.453884);
+      expect(parseCoordinate(-33.8688)).toBe(-33.8688);
+      expect(parseCoordinate('-33.8688')).toBe(-33.8688);
+    });
+
+    it('returns NaN for null, undefined, empty string, and whitespace without converting to zero', () => {
+      expect(Number.isNaN(parseCoordinate(null))).toBe(true);
+      expect(Number.isNaN(parseCoordinate(undefined))).toBe(true);
+      expect(Number.isNaN(parseCoordinate(''))).toBe(true);
+      expect(Number.isNaN(parseCoordinate('   '))).toBe(true);
+    });
+
+    it('returns NaN for non-numeric malformed strings', () => {
+      expect(Number.isNaN(parseCoordinate('invalid'))).toBe(true);
+      expect(Number.isNaN(parseCoordinate('12abc'))).toBe(true);
+      expect(Number.isNaN(parseCoordinate(NaN))).toBe(true);
+    });
   });
 
   describe('isValidCoordinate helper', () => {
@@ -134,6 +164,23 @@ describe('HotelLocationMap Component & Coordinates Validation (Phase 4C)', () =>
 
       // Confirms MapViewController initialized center on mount
       expect(mockSetView).toHaveBeenCalledWith([24.453884, 54.377344], 14);
+    });
+
+    it('correctly accepts zero coordinates (latitude 0, longitude 0) without treating as missing', () => {
+      render(
+        <HotelLocationMap
+          latitude={0}
+          longitude={0}
+          title="Equator Meridian Hotel"
+        />
+      );
+
+      const mapContainer = screen.getByTestId('hotel-location-map');
+      expect(mapContainer).toBeInTheDocument();
+
+      const marker = screen.getByTestId('mock-marker');
+      expect(marker).toHaveAttribute('data-position', JSON.stringify([0, 0]));
+      expect(mockSetView).toHaveBeenCalledWith([0, 0], 14);
     });
 
     it('dynamically updates map view and moves marker when coordinates change after mount', () => {
@@ -278,6 +325,22 @@ describe('HotelLocationMap Component & Coordinates Validation (Phase 4C)', () =>
       const fallback = screen.getByTestId('map-unavailable');
       expect(fallback).toBeInTheDocument();
       expect(screen.getByText('Location Map Unavailable')).toBeInTheDocument();
+    });
+
+    it('renders fallback state when coordinates are null without converting to zero', () => {
+      render(
+        <HotelLocationMap
+          latitude={null}
+          longitude={null}
+          title="Null Coordinates Hotel"
+        />
+      );
+
+      expect(screen.queryByTestId('hotel-location-map')).not.toBeInTheDocument();
+      const fallback = screen.getByTestId('map-unavailable');
+      expect(fallback).toBeInTheDocument();
+      expect(screen.getByText('Location Map Unavailable')).toBeInTheDocument();
+      expect(screen.getByText(/Coordinates \(N\/A, N\/A\) are outside valid geographic bounds/)).toBeInTheDocument();
     });
 
     it('renders fallback state when coordinates are missing or undefined', () => {

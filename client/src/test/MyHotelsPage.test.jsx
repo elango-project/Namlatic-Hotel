@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Provider } from 'react-redux';
 import { configureStore } from '@reduxjs/toolkit';
@@ -69,6 +69,22 @@ const createMockStore = (initialCustomState = {}) => {
   });
 };
 
+const renderPage = async (store = createMockStore()) => {
+  let rendered;
+  await act(async () => {
+    rendered = render(
+      <Provider store={store}>
+        <HelmetProvider>
+          <MemoryRouter>
+            <MyHotelsPage />
+          </MemoryRouter>
+        </HelmetProvider>
+      </Provider>
+    );
+  });
+  return rendered;
+};
+
 describe('MyHotelsPage Component – Delete Confirmation & Success Feedback', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -79,34 +95,16 @@ describe('MyHotelsPage Component – Delete Confirmation & Success Feedback', ()
     hotelApi.deleteHotel.mockResolvedValue({ message: 'Hotel deleted successfully' });
   });
 
-  it('renders hotel cards and total count badge', () => {
-    const store = createMockStore();
-    render(
-      <Provider store={store}>
-        <HelmetProvider>
-          <MemoryRouter>
-            <MyHotelsPage />
-          </MemoryRouter>
-        </HelmetProvider>
-      </Provider>
-    );
+  it('renders hotel cards and total count badge', async () => {
+    await renderPage();
 
     expect(screen.getByText('Grand Palace Resort')).toBeInTheDocument();
     expect(screen.getByText('Azure Marina Hotel')).toBeInTheDocument();
     expect(screen.getByText('Total Properties')).toBeInTheDocument();
   });
 
-  it('opens confirmation modal when delete button on hotel card is clicked', () => {
-    const store = createMockStore();
-    render(
-      <Provider store={store}>
-        <HelmetProvider>
-          <MemoryRouter>
-            <MyHotelsPage />
-          </MemoryRouter>
-        </HelmetProvider>
-      </Provider>
-    );
+  it('opens confirmation modal when delete button on hotel card is clicked', async () => {
+    await renderPage();
 
     const deleteButtons = screen.getAllByRole('button', { name: /^Delete /i });
     fireEvent.click(deleteButtons[0]);
@@ -117,17 +115,8 @@ describe('MyHotelsPage Component – Delete Confirmation & Success Feedback', ()
     expect(screen.getByText('Grand Palace Resort', { selector: 'strong' })).toBeInTheDocument();
   });
 
-  it('closes confirmation modal when cancel button is clicked without deleting', () => {
-    const store = createMockStore();
-    render(
-      <Provider store={store}>
-        <HelmetProvider>
-          <MemoryRouter>
-            <MyHotelsPage />
-          </MemoryRouter>
-        </HelmetProvider>
-      </Provider>
-    );
+  it('closes confirmation modal when cancel button is clicked without deleting', async () => {
+    await renderPage();
 
     const deleteButtons = screen.getAllByRole('button', { name: /^Delete /i });
     fireEvent.click(deleteButtons[0]);
@@ -140,22 +129,15 @@ describe('MyHotelsPage Component – Delete Confirmation & Success Feedback', ()
   });
 
   it('dispatches deletion and displays success toast feedback upon confirmation', async () => {
-    const store = createMockStore();
-    render(
-      <Provider store={store}>
-        <HelmetProvider>
-          <MemoryRouter>
-            <MyHotelsPage />
-          </MemoryRouter>
-        </HelmetProvider>
-      </Provider>
-    );
+    await renderPage();
 
     const deleteButtons = screen.getAllByRole('button', { name: /^Delete /i });
     fireEvent.click(deleteButtons[0]);
 
     const confirmButton = screen.getByRole('button', { name: 'Delete Property' });
-    fireEvent.click(confirmButton);
+    await act(async () => {
+      fireEvent.click(confirmButton);
+    });
 
     // Modal closes
     await waitFor(() => {
@@ -167,5 +149,42 @@ describe('MyHotelsPage Component – Delete Confirmation & Success Feedback', ()
     expect(
       screen.getByText('Property "Grand Palace Resort" was deleted successfully.')
     ).toBeInTheDocument();
+  });
+
+  it('displays error toast notification when deletion fails and does not swallow error', async () => {
+    hotelApi.deleteHotel.mockRejectedValueOnce(new Error('Database connectivity issue'));
+    await renderPage();
+
+    const deleteButtons = screen.getAllByRole('button', { name: /^Delete /i });
+    fireEvent.click(deleteButtons[0]);
+
+    const confirmButton = screen.getByRole('button', { name: 'Delete Property' });
+    await act(async () => {
+      fireEvent.click(confirmButton);
+    });
+
+    // Modal closes and error toast appears
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    const toast = screen.getByTestId('flash-notification');
+    expect(toast).toHaveClass('toast-error');
+    expect(screen.getByText(/Database connectivity issue/i)).toBeInTheDocument();
+  });
+
+  it('renders EmptyState when inventory has zero hotel records', async () => {
+    hotelApi.getHotels.mockResolvedValueOnce({
+      data: [],
+      pagination: { total: 0, limit: 6, offset: 0, hasMore: false },
+    });
+    const emptyStore = createMockStore({
+      items: [],
+      pagination: { total: 0, limit: 6, offset: 0, hasMore: false },
+    });
+
+    await renderPage(emptyStore);
+
+    expect(screen.getByText('No hotel properties yet')).toBeInTheDocument();
   });
 });

@@ -75,9 +75,9 @@ function MyHotelsPage() {
     dispatch(fetchHotels());
   };
 
-  // Delete flow with confirmation and success feedback
+  // Delete flow with confirmation and success/error feedback
   const handleDeleteConfirm = async () => {
-    if (!hotelToDelete) return;
+    if (!hotelToDelete || deleteStatus === 'loading') return;
     const deletedTitle = hotelToDelete.title;
     const resultAction = await dispatch(deleteHotel(hotelToDelete.id));
     setHotelToDelete(null);
@@ -87,6 +87,11 @@ function MyHotelsPage() {
         message: `Property "${deletedTitle}" was deleted successfully.`,
       });
       dispatch(fetchHotelStats());
+    } else if (deleteHotel.rejected.match(resultAction)) {
+      setFlashMessage({
+        type: 'error',
+        message: resultAction.payload || 'Failed to delete property. Please try again.',
+      });
     }
   };
 
@@ -116,12 +121,20 @@ function MyHotelsPage() {
         </div>
       </div>
 
-      {/* Success / Flash Banner */}
+      {/* Success / Error Flash Banner */}
       {flashMessage && (
-        <div className="toast-notification toast-success" role="status" data-testid="flash-notification">
-          <div className="toast-icon" aria-hidden="true">✓</div>
+        <div
+          className={`toast-notification toast-${flashMessage.type || 'success'}`}
+          role={flashMessage.type === 'error' ? 'alert' : 'status'}
+          data-testid="flash-notification"
+        >
+          <div className="toast-icon" aria-hidden="true">
+            {flashMessage.type === 'error' ? '✕' : '✓'}
+          </div>
           <div className="toast-body">
-            <span className="toast-title">Success</span>
+            <span className="toast-title">
+              {flashMessage.type === 'error' ? 'Error' : 'Success'}
+            </span>
             <span className="toast-message">{flashMessage.message}</span>
           </div>
           <button

@@ -202,18 +202,6 @@ function MainLayout() {
             <NavLink to="/hotels" className="btn btn-outline btn-sm header-action-btn">
               Browse Inventory
             </NavLink>
-            <button
-              type="button"
-              className="btn btn-outline btn-sm header-logout-btn"
-              onClick={handleLogout}
-              disabled={loggingOut}
-              aria-label="Sign out of owner portal"
-            >
-              <svg className="logout-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
-              <span>{loggingOut ? 'Signing out...' : 'Sign Out'}</span>
-            </button>
             <div className="header-profile-badge">
               <span className="badge-pill">Owner View</span>
             </div>

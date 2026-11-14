@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { Helmet } from 'react-helmet-async';
@@ -12,11 +12,51 @@ function DashboardPage() {
     (state) => state.hotels
   );
 
+  const scrollTrackRef = useRef(null);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  // Monitor horizontal scrollability and update right-fade visibility dynamically
+  const updateScrollState = useCallback(() => {
+    const el = scrollTrackRef.current;
+    if (!el) {
+      setCanScrollRight(false);
+      return;
+    }
+    const hasMoreRight = el.scrollWidth - el.clientWidth - el.scrollLeft > 2;
+    setCanScrollRight((prev) => (prev !== hasMoreRight ? hasMoreRight : prev));
+  }, []);
+
   // Fetch recent hotels and portfolio-wide server aggregated statistics independently on mount
   useEffect(() => {
     dispatch(fetchHotelStats());
     dispatch(fetchHotels({ limit: 6, offset: 0, title: '', minPrice: '', maxPrice: '' }));
   }, [dispatch]);
+
+  // Handle ResizeObserver and layout changes to detect scroll overflow
+  useEffect(() => {
+    const el = scrollTrackRef.current;
+    if (!el) return;
+
+    updateScrollState();
+
+    let resizeObserver = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        updateScrollState();
+      });
+      resizeObserver.observe(el);
+    } else {
+      window.addEventListener('resize', updateScrollState);
+    }
+
+    return () => {
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      } else {
+        window.removeEventListener('resize', updateScrollState);
+      }
+    };
+  }, [items, updateScrollState]);
 
   const totalHotels = stats.totalProperties || 0;
 
@@ -116,13 +156,19 @@ function DashboardPage() {
               </svg>
             </div>
           </div>
-          <div className="metric-value">
+          <div className="metric-value metric-value-range">
             {totalHotels > 0
-              ? `${formatCurrency(stats.minPrice)} – ${formatCurrency(stats.maxPrice)}`
+              ? Number(stats.minPrice) === Number(stats.maxPrice)
+                ? formatCurrency(stats.minPrice)
+                : `${formatCurrency(stats.minPrice)} – ${formatCurrency(stats.maxPrice)}`
               : formatCurrency(0)}
           </div>
           <div className="metric-footer">
-            <span className="metric-subtext">Portfolio price bounds (MIN – MAX)</span>
+            <span className="metric-subtext">
+              {totalHotels > 0 && Number(stats.minPrice) === Number(stats.maxPrice)
+                ? 'All properties have the same rate'
+                : 'Portfolio price bounds (MIN – MAX)'}
+            </span>
           </div>
         </div>
 
@@ -178,10 +224,21 @@ function DashboardPage() {
             </Link>
           </div>
         ) : (
-          <div className="hotels-grid">
-            {items.slice(0, 3).map((hotel) => (
-              <HotelCard key={hotel.id} hotel={hotel} />
-            ))}
+          <div className={`recent-properties-container ${canScrollRight ? 'has-overflow-right' : ''}`}>
+            <div
+              ref={scrollTrackRef}
+              onScroll={updateScrollState}
+              className="recent-properties-track"
+              tabIndex={0}
+              role="region"
+              aria-label="Recent hotel properties horizontal scroll"
+            >
+              {items.map((hotel) => (
+                <div key={hotel.id} className="recent-property-card-item">
+                  <HotelCard hotel={hotel} />
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </section>

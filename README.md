@@ -127,7 +127,15 @@ namlatic-hotel-portal/
    DB_USER=namlatic_app
    DB_PASSWORD=your_secure_password
    ```
-4. Start the backend development server:
+4. Run migrations and bootstrap the initial owner account:
+   ```powershell
+   # Apply PostgreSQL migrations (schema, tables, indexes)
+   npm run db:migrate
+
+   # Bootstrap initial owner credentials interactively
+   npm run db:bootstrap
+   ```
+5. Start the backend development server:
    ```powershell
    npm run dev
    ```
