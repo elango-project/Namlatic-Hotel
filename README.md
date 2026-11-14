@@ -7,7 +7,6 @@ A full-stack hotel inventory management dashboard built with React, Redux Toolki
 | Resource | Link |
 | --- | --- |
 | **Live Application** | https://namlatic-hotel.vercel.app |
-| **Backend API** | https://namlatic-hotel-backend.onrender.com |
 | **GitHub Repository** | https://github.com/elango-project/Namlatic-Hotel |
 | **Demo Video** | [Watch the project demonstration](https://drive.google.com/file/d/13cJOvrDkJp04XS0jZd7YaeOpSqPNx4zU/view?usp=sharing) |
 
