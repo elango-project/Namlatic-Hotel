@@ -16,19 +16,19 @@ describe('HotelCard Component', () => {
   };
 
   describe('Utility: formatPrice', () => {
-    it('formats prices using currency-neutral format by default, or configured currency when specified', () => {
-      // Default currency-neutral format
-      expect(formatPrice('249.99')).toBe('249.99');
-      expect(formatPrice(150)).toBe('150.00');
-      expect(formatPrice('72.74')).toBe('72.74');
-      expect(formatPrice(0)).toBe('0.00');
-      expect(formatPrice('0.00')).toBe('0.00');
-      expect(formatPrice('invalid')).toBe('0.00');
-      expect(formatPrice(null)).toBe('0.00');
-      expect(formatPrice(undefined)).toBe('0.00');
+    it('formats prices using USD ($) format by default, or configured currency when specified', () => {
+      // Default USD format
+      expect(formatPrice('249.99')).toBe('$249.99');
+      expect(formatPrice(150)).toBe('$150.00');
+      expect(formatPrice('72.74')).toBe('$72.74');
+      expect(formatPrice(0)).toBe('$0.00');
+      expect(formatPrice('0.00')).toBe('$0.00');
+      expect(formatPrice('invalid')).toBe('$0.00');
+      expect(formatPrice(null)).toBe('$0.00');
+      expect(formatPrice(undefined)).toBe('$0.00');
 
       // Large numeric values
-      expect(formatPrice('1500000.00')).toBe('1,500,000.00');
+      expect(formatPrice('1500000.00')).toBe('$1,500,000.00');
 
       // Explicit currency code formatting
       expect(formatPrice('249.99', 'USD')).toBe('$249.99');
@@ -69,7 +69,7 @@ describe('HotelCard Component', () => {
 
       // Price (placed in card body with label and prominent value)
       expect(screen.getByText('Price')).toBeInTheDocument();
-      expect(screen.getByText('249.99')).toBeInTheDocument();
+      expect(screen.getByText('$249.99')).toBeInTheDocument();
 
       // Description preview
       expect(

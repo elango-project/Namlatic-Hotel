@@ -125,8 +125,8 @@ describe('Phase 1: Dashboard Metrics & Currency Formatting', () => {
     expect(screen.getByText('Price Range')).toBeInTheDocument();
     expect(screen.getByText('Properties with Images')).toBeInTheDocument();
 
-    expect(screen.getByText('284.50')).toBeInTheDocument();
-    expect(screen.getByText('220.00 – 349.00')).toBeInTheDocument();
+    expect(screen.getByText('$284.50')).toBeInTheDocument();
+    expect(screen.getByText('$220.00 – $349.00')).toBeInTheDocument();
     expect(screen.getByText('Portfolio price bounds (MIN – MAX)')).toBeInTheDocument();
   });
 
@@ -178,8 +178,8 @@ describe('Phase 1: Dashboard Metrics & Currency Formatting', () => {
 
     await renderWithProviders(<DashboardPage />, singlePropertyStore);
 
-    // Both Average Price and Price Range display 72.74 because mathematically AVG = MIN = MAX = 72.74
-    const values = screen.getAllByText('72.74');
+    // Both Average Price and Price Range display $72.74 because mathematically AVG = MIN = MAX = $72.74
+    const values = screen.getAllByText('$72.74');
     expect(values.length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('All properties have the same rate')).toBeInTheDocument();
   });
@@ -217,7 +217,7 @@ describe('Phase 1: Dashboard Metrics & Currency Formatting', () => {
 
     await renderWithProviders(<DashboardPage />, uniformPropertiesStore);
 
-    const values = screen.getAllByText('72.74');
+    const values = screen.getAllByText('$72.74');
     expect(values.length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('All properties have the same rate')).toBeInTheDocument();
   });
@@ -251,7 +251,7 @@ describe('Phase 1: Dashboard Metrics & Currency Formatting', () => {
 
     await renderWithProviders(<DashboardPage />, emptyStore);
 
-    const zeroes = screen.getAllByText('0.00');
+    const zeroes = screen.getAllByText('$0.00');
     expect(zeroes.length).toBeGreaterThanOrEqual(2);
     await screen.findByText('No hotel properties found');
     expect(screen.getByText('No hotel properties found')).toBeInTheDocument();

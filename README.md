@@ -200,9 +200,9 @@ The project has separate frontend and backend automated unit test suites.
 
 | Test Suite | Test Files / Suites | Passed | Failed |
 | --- | --- | --- | --- |
-| **Frontend** | 22 test files | 270 | 0 |
+| **Frontend** | 23 test files | 275 | 0 |
 | **Backend** | 78 test suites | 336 | 0 |
-| **Total** | | **606** | **0** |
+| **Total** | | **611** | **0** |
 
 ### Run Frontend Tests
 
@@ -213,8 +213,8 @@ npm --prefix client test -- --run
 ```
 
 **Verified result:**
-- 22 test files passed
-- 270 tests passed
+- 23 test files passed
+- 275 tests passed
 - 0 failed
 
 ### Run Backend Unit Tests

@@ -3,6 +3,7 @@ import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { checkBackendReadiness } from '../features/hotels/hotelsSlice';
 import { logoutUser, selectCurrentUser } from '../store/authSlice';
+import Footer from '../components/Footer';
 
 function MainLayout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -212,6 +213,9 @@ function MainLayout() {
         <main className="content-container">
           <Outlet />
         </main>
+
+        {/* Global Application Footer */}
+        <Footer />
       </div>
     </div>
   );

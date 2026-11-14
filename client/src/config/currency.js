@@ -6,13 +6,13 @@
  * representation (e.g., "250.00") rather than silently defaulting to USD.
  */
 
-// Read configured currency from Vite or Node environment
+// Read configured currency from Vite or Node environment, defaulting to USD ($)
 const envCurrency =
   (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_APP_CURRENCY) ||
   (typeof process !== 'undefined' && process.env && process.env.VITE_APP_CURRENCY) ||
-  '';
+  'USD';
 
-export const APP_CURRENCY = envCurrency.trim() || null;
+export const APP_CURRENCY = envCurrency.trim() || 'USD';
 
 /**
  * Derives the currency symbol for a given ISO 4217 currency code.

@@ -3014,3 +3014,178 @@
     font-size: 0.85rem;
   }
 }
+
+/* ==========================================================================
+   Global Application Footer (SaaS Navy Theme)
+   ========================================================================== */
+
+.app-footer {
+  background-color: #0c1527;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  color: #94a3b8;
+  margin-top: auto;
+  width: 100%;
+}
+
+.footer-container {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2.75rem 2rem 1.5rem 2rem;
+}
+
+.footer-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 3rem;
+  align-items: start;
+}
+
+.footer-brand-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  max-width: 400px;
+}
+
+.footer-brand-header {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.footer-brand-header .brand-icon-box {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+.footer-brand-titles {
+  display: flex;
+  flex-direction: column;
+}
+
+.footer-brand-name {
+  color: #ffffff;
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  line-height: 1.2;
+}
+
+.footer-brand-sub {
+  color: #3b82f6;
+  font-size: 0.725rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.75px;
+}
+
+.footer-brand-desc {
+  color: #94a3b8;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.footer-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.footer-heading {
+  color: #f8fafc;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.75px;
+  margin-bottom: 1.1rem;
+}
+
+.footer-links {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.footer-link {
+  color: #94a3b8;
+  text-decoration: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  transition: color var(--transition-fast), transform var(--transition-fast);
+}
+
+.footer-link:hover {
+  color: #60a5fa;
+  transform: translateX(2px);
+}
+
+.footer-link:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 3px;
+  border-radius: var(--radius-xs);
+  color: #ffffff;
+}
+
+.footer-bottom {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin-top: 2.25rem;
+  padding-top: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.footer-copyright {
+  color: #64748b;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  margin: 0;
+}
+
+/* Responsive Footer Breakpoints */
+@media (max-width: 900px) {
+  .footer-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 2.25rem;
+  }
+
+  .footer-brand-section {
+    grid-column: 1 / -1;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 600px) {
+  .footer-container {
+    padding: 2rem 1.25rem 1.25rem 1.25rem;
+  }
+
+  .footer-grid {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+
+  .footer-links {
+    gap: 0.75rem;
+  }
+
+  .footer-link {
+    padding: 0.25rem 0;
+    min-height: 38px;
+  }
+
+  .footer-bottom {
+    margin-top: 1.75rem;
+    padding-top: 1.25rem;
+    text-align: center;
+    justify-content: center;
+  }
+}
